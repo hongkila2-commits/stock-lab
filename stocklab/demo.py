@@ -26,7 +26,8 @@ def _vix(us: np.ndarray, rng) -> np.ndarray:
     return np.clip(18 + v, 10, 60)
 
 
-def generate(conn, n_days: int = 750, seed: int = 7) -> dict[str, str]:
+def generate(conn, n_days: int = 750, seed: int = 7, n_stocks: int = 60,
+             n_listing_only: int = 200) -> dict[str, str]:
     rng = np.random.default_rng(seed)
     dates = pd.bdate_range(end=pd.Timestamp.today().normalize() - pd.Timedelta(days=1),
                            periods=n_days)
@@ -34,7 +35,8 @@ def generate(conn, n_days: int = 750, seed: int = 7) -> dict[str, str]:
     mkt = rng.normal(0.0003, 0.011, n_days)
     fx = 1300 * np.exp(np.cumsum(-0.3 * mkt + rng.normal(0, 0.004, n_days)))
     us = rng.normal(0.0004, 0.012, n_days)
-    stocks = {f"9{i:05d}": n for i, n in enumerate(NAMES)}
+    names = [NAMES[i % len(NAMES)] + ("" if i < len(NAMES) else "홀딩스") for i in range(n_stocks)]
+    stocks = {f"9{i:04d}0": n for i, n in enumerate(names)}   # 끝자리 0 = 보통주
 
     price_rows, flow_rows, news_rows, dis_rows = [], [], [], []
     for code in stocks:
@@ -95,7 +97,41 @@ def generate(conn, n_days: int = 750, seed: int = 7) -> dict[str, str]:
                                                "region": region}))
     db.upsert(conn, "stocks", pd.DataFrame({"code": list(stocks), "name": list(stocks.values()),
                                             "source": "demo"}))
+    _listing(conn, pd.concat(price_rows), stocks, n_listing_only, rng)
+    conn.executemany("INSERT OR IGNORE INTO user_watchlist VALUES (?, ?)",
+                     [(c, f"2000-01-0{i + 1}") for i, c in enumerate(list(stocks)[:5])])
     db.set_meta(conn, "demo", "1")
     db.set_meta(conn, "last_update", datetime.now().isoformat(timespec="minutes"))
     conn.commit()
     return stocks
+
+
+def _listing(conn, prices: pd.DataFrame, stocks: dict[str, str], n_extra: int, rng) -> None:
+    """전체 종목 목록(가상): 분석 종목 + 목록에만 있는 종목(우선주·스팩 섞음)."""
+    last = prices.sort_values("date").groupby("code").tail(2)
+    rows = []
+    for code, g in last.groupby("code"):
+        c0, c1 = g["close"].iloc[0], g["close"].iloc[-1]
+        shares = rng.uniform(2e7, 2e9)
+        rows.append({"code": code, "name": stocks[code], "market": "KOSPI" if rng.random() < .7 else "KOSDAQ",
+                     "close": c1, "change_pct": round((c1 / c0 - 1) * 100, 2),
+                     "volume": g["volume"].iloc[-1], "value": g["value"].iloc[-1],
+                     "market_cap": round(c1 * shares / 1e8), "asof": g["date"].iloc[-1]})
+    asof = prices["date"].max()
+    for i in range(n_extra):
+        kind = rng.random()
+        code, name = f"8{i:04d}0", f"가상종목{i + 1:03d}"
+        if kind < 0.08:
+            code, name = f"8{i:04d}5", f"가상종목{i + 1:03d}우"       # 우선주
+        elif kind < 0.12:
+            name = f"가상기업인수목적{i + 1}호스팩"
+        close = float(np.round(rng.lognormal(9, 1), -1))
+        rows.append({"code": code, "name": name, "market": "KOSDAQ" if rng.random() < .6 else "KOSPI",
+                     "close": close, "change_pct": round(float(rng.normal(0, 2.5)), 2),
+                     "volume": float(rng.lognormal(11, 1)), "value": None,
+                     "market_cap": round(close * rng.uniform(5e6, 5e7) / 1e8), "asof": asof})
+    df = pd.DataFrame(rows)
+    df["value"] = df["value"].fillna(df["close"] * df["volume"] / 1e6)
+    df["source"] = "데모"
+    conn.execute("DELETE FROM listing")
+    db.upsert(conn, "listing", df)

@@ -29,6 +29,8 @@ class Settings:
     screener: dict = field(default_factory=dict)
     model: dict = field(default_factory=dict)
     sentiment: dict = field(default_factory=dict)
+    universe_auto: dict = field(default_factory=dict)
+    picks: dict = field(default_factory=dict)
 
     @property
     def all_stocks(self) -> dict[str, str]:
@@ -41,12 +43,14 @@ def load_settings(path: Path | None = None) -> Settings:
     return Settings(
         watchlist=_codes(raw.get("watchlist")),
         universe=_codes(raw.get("universe")),
-        collect={"history_years": 5, "news_per_stock": 100, "dart_lookback_days": 365,
+        collect={"history_years": 3, "news_per_stock": 100, "dart_lookback_days": 365,
                  **(raw.get("collect") or {})},
         screener={"auto_add_top": 10, **(raw.get("screener") or {})},
         model={"horizon": 5, "target": "excess", "bullish": 0.55, "bearish": 0.45,
                "retrain_every_days": 7, **(raw.get("model") or {})},
         sentiment={"engine": "lexicon", **(raw.get("sentiment") or {})},
+        universe_auto={"top_market_cap": 300, **(raw.get("universe_auto") or {})},
+        picks={"count": 30, "min_value_eok": 10, **(raw.get("picks") or {})},
     )
 
 

@@ -195,3 +195,17 @@ class KisClient:
         # 장중에는 당일 행이 빈 값으로 온다 → 확정되지 않은 행은 저장하지 않는다.
         df = df.dropna(subset=["frgn_qty", "orgn_qty"], how="all")
         return df.sort_values("date").reset_index(drop=True)
+
+    def quote(self, code: str) -> dict:
+        """현재가·시가총액·PER/PBR·52주 고저·외국인 소진율 (주식현재가 시세)."""
+        o = self.get("/uapi/domestic-stock/v1/quotations/inquire-price", "FHKST01010100",
+                     {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}).get("output") or {}
+        f = lambda k: pd.to_numeric(o.get(k), errors="coerce")  # noqa: E731
+        return {
+            "price": f("stck_prpr"), "change_pct": f("prdy_ctrt"),
+            "market_cap": f("hts_avls"),                    # 억원
+            "per": f("per"), "pbr": f("pbr"), "eps": f("eps"), "bps": f("bps"),
+            "high_52w": f("w52_hgpr"), "low_52w": f("w52_lwpr"),
+            "foreign_pct": f("hts_frgn_ehrt"),              # 외국인 소진율(%)
+            "sector": (o.get("bstp_kor_isnm") or "").strip(),
+        }

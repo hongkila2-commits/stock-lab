@@ -53,6 +53,23 @@ CREATE TABLE IF NOT EXISTS screener (
     streak INTEGER, orgn_amt_5 REAL, score REAL, rank INTEGER,
     PRIMARY KEY (asof, code)
 );
+-- KOSPI·KOSDAQ 전체 종목 스냅샷 (update 때마다 통째로 교체). value 백만원, market_cap 억원
+CREATE TABLE IF NOT EXISTS listing (
+    code TEXT PRIMARY KEY, name TEXT, market TEXT, close REAL, change_pct REAL,
+    volume REAL, value REAL, market_cap REAL, asof TEXT, source TEXT
+);
+-- 대시보드에서 추가한 관심종목 (settings.yaml 의 watchlist 와 합쳐서 사용)
+CREATE TABLE IF NOT EXISTS user_watchlist (code TEXT PRIMARY KEY, added_at TEXT);
+-- 날짜별 추천 종목 (누적 → 실제 성적 추적)
+CREATE TABLE IF NOT EXISTS picks (
+    asof TEXT, code TEXT, rank INTEGER, prob REAL,
+    PRIMARY KEY (asof, code)
+);
+-- 종목별 예측 근거. pct = 같은 날 전 종목 중 백분위(0~1), contrib = 확률을 올린(+)/내린(-) 정도
+CREATE TABLE IF NOT EXISTS explain (
+    asof TEXT, code TEXT, feature TEXT, value REAL, pct REAL, contrib REAL,
+    PRIMARY KEY (asof, code, feature)
+);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
@@ -103,3 +120,7 @@ def get_meta(conn: sqlite3.Connection, key: str, default: str | None = None) -> 
 def last_date(conn: sqlite3.Connection, table: str, code: str) -> str | None:
     row = conn.execute(f"SELECT MAX(date) FROM {table} WHERE code = ?", (code,)).fetchone()
     return row[0] if row else None
+
+
+def user_watchlist(conn: sqlite3.Connection) -> list[str]:
+    return [r[0] for r in conn.execute("SELECT code FROM user_watchlist ORDER BY added_at")]
