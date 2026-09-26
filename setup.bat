@@ -47,6 +47,7 @@ if errorlevel 1 (
 )
 
 if not exist .env copy .env.example .env >nul
+.venv\Scripts\python -m stocklab env-sync
 echo.
 echo [OK] Setup complete. Notepad will open .env - enter your KIS keys and save.
 notepad .env

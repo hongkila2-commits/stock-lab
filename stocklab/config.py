@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import re
+from datetime import date
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -77,3 +79,39 @@ def model_dir() -> Path:
     """데모 DB 로 학습한 모델이 실제 모델을 덮어쓰지 않도록 DB 별로 폴더를 나눈다."""
     p = db_path()
     return MODEL_DIR if p.name == "market.sqlite" else MODEL_DIR / p.stem
+
+
+_KEY = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=")
+
+
+def sync_env(env_path: Path | None = None, example_path: Path | None = None) -> list[str]:
+    """.env.example 에 새로 생긴 항목을 .env 끝에 빈 값으로 추가한다 (기존 값은 건드리지 않음).
+
+    .env 는 비밀키가 있어 GitHub 로 주고받지 않으므로, git pull 로 새 설정 항목이 생겨도
+    .env 에는 자동으로 나타나지 않는다. update·check·setup 때 이 함수로 채운다.
+    """
+    env_path = env_path or ROOT / ".env"
+    example_path = example_path or ROOT / ".env.example"
+    if not env_path.exists() or not example_path.exists():
+        return []
+    have = {m.group(1) for line in env_path.read_text(encoding="utf-8-sig").splitlines()
+            if (m := _KEY.match(line))}
+    blocks, comments, added = [], [], []
+    for line in example_path.read_text(encoding="utf-8").splitlines():
+        m = _KEY.match(line)
+        if m:
+            if m.group(1) not in have:
+                blocks.append("\n".join(comments + [f"{m.group(1)}="]))
+                added.append(m.group(1))
+            comments = []
+        elif line.strip().startswith("#"):
+            comments.append(line)
+        else:
+            comments = []
+    if blocks:
+        text = env_path.read_text(encoding="utf-8-sig")
+        sep = "" if text.endswith("\n") or not text else "\n"
+        with env_path.open("a", encoding="utf-8") as fp:
+            fp.write(f"{sep}\n# ── {date.today()} 새로 생긴 설정 항목 (자동 추가, 필요한 것만 값을 채우세요) ──\n")
+            fp.write("\n".join(blocks) + "\n")
+    return added

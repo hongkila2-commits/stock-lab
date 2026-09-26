@@ -19,7 +19,7 @@ from datetime import date, datetime, time as dtime, timedelta
 import pandas as pd
 
 from . import db, features, model, picks, screener
-from .config import LOG_DIR, ROOT, env, load_settings
+from .config import LOG_DIR, ROOT, env, load_settings, sync_env
 
 log = logging.getLogger("stocklab")
 
@@ -41,9 +41,22 @@ def _kis():
     return KisClient(env("KIS_APP_KEY"), env("KIS_APP_SECRET"), env("KIS_ENV", "paper"))
 
 
+def cmd_env_sync(args) -> int:
+    added = sync_env()
+    if added:
+        print(f"[OK] .env 에 새 설정 항목 {len(added)}개를 추가했습니다: {', '.join(added)}")
+        print("     메모장으로 .env 를 열어 필요한 항목의 값을 채우세요 (맨 아래에 있습니다).")
+    else:
+        print("[OK] .env 에 빠진 설정 항목이 없습니다.")
+    return 0
+
+
 def cmd_check(args) -> int:
     ok = True
     print(f"설정 파일: {ROOT / '.env'}")
+    added = sync_env()
+    if added:
+        print(f"[추가] .env 맨 아래에 새 설정 항목을 넣었습니다: {', '.join(added)}")
     try:
         kis = _kis()
         kis.token()
@@ -160,6 +173,9 @@ def remove_stock(code: str) -> None:
 def cmd_update(args) -> int:
     from .collectors import dart, listing, macro, market, news
     s = load_settings()
+    added = sync_env()
+    if added:
+        log.info(".env 에 새 설정 항목 추가: %s (값은 비어 있음)", ", ".join(added))
     with db.session() as conn:
         log.info("⓪ 전체 종목 목록 (KOSPI·KOSDAQ)")
         listing.update_listing(conn)
@@ -336,5 +352,6 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(fn=cmd_realtime)
     sub.add_parser("kakao-login").set_defaults(fn=cmd_kakao_login)
     sub.add_parser("kakao-test").set_defaults(fn=cmd_kakao_test)
+    sub.add_parser("env-sync", help=".env 에 새 설정 항목 추가").set_defaults(fn=cmd_env_sync)
     args = p.parse_args(argv)
     return args.fn(args)

@@ -322,6 +322,7 @@ stock-lab/
 | 실시간이 '30초 조회' 로만 동작 | 실시간(WebSocket) 연결 실패 — 방화벽이 `ops.koreainvestment.com` 포트 31000(모의)/21000(실전)을 막는지 확인. 조회 방식으로도 기능은 같습니다 |
 | 휴대폰에서 주소가 안 열림 | ① PC 에서 `dashboard.bat` 실행 중인지 ② `mobile_setup.bat` 을 **관리자 권한**으로 실행했는지 ③ 집 밖이면 휴대폰 Tailscale 이 '연결됨'인지 ④ PC 가 절전 모드가 아닌지 |
 | 휴대폰에서 비밀번호 화면이 안 나오고 '보기 전용' | `.env` 에 `DASHBOARD_PASSWORD` 가 비어 있음. 입력 후 `dashboard.bat` 을 다시 실행 |
+| `git pull` 뒤 `.env` 에 새 항목(예: `DASHBOARD_PASSWORD`)이 없음 | `.env` 는 비밀키 파일이라 GitHub 로 주고받지 않습니다. **`check.bat`** 을 실행하면(또는 update 때) 빠진 항목이 `.env` 맨 아래에 빈 값으로 자동 추가됩니다 |
 | 처음부터 다시 받고 싶음 | `data\market.sqlite` 삭제 후 update |
 
 실행 기록은 `logs\stocklab.log` 에 남습니다. 문제가 생기면 이 파일 끝부분을 확인하세요.
