@@ -14,13 +14,20 @@ from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, names, n
                     open_stock, prices, q, refresh, rt_status, stats)
 from stocklab.config import db_path  # noqa: E402
 from views import detail, flows, macro, model, sectors, watch  # noqa: E402
+import mobile  # noqa: E402
+from stocklab import netinfo  # noqa: E402
+
+# 휴대폰 등 다른 기기에서 접속하면 비밀번호 확인 (PC 자신은 통과)
+mobile.gate()
+mobile.compact_default()
 
 # 자동 갱신 영역(fragment)에서 누른 종목으로 이동 — 위젯을 그리기 전에 처리해야 한다
 if "goto" in st.session_state:
     open_stock(st.session_state.pop("goto"))
 
-# 사이드바를 조금 넓혀 전체 종목 표(종목·현재가·등락)가 잘리지 않게
-st.markdown("<style>section[data-testid='stSidebar']{min-width:400px;}</style>", unsafe_allow_html=True)
+# PC 화면에서만 사이드바를 조금 넓혀 전체 종목 표가 잘리지 않게 (휴대폰에선 기본 접이식 그대로)
+st.markdown("<style>@media (min-width: 900px){section[data-testid='stSidebar']{min-width:400px;}}</style>",
+            unsafe_allow_html=True)
 
 meta = q("SELECT key, value FROM meta")
 META = dict(zip(meta["key"], meta["value"])) if not meta.empty else {}
@@ -143,6 +150,9 @@ with st.sidebar:
         st.warning("**데모 모드** — 가상 데이터입니다.")
     st.radio("메뉴", PAGES, key="page", label_visibility="collapsed")
     rt_badge()
+    st.toggle("📱 간단히 보기", key="compact", help="휴대폰처럼 좁은 화면용: 표의 열을 줄이고 차트를 작게")
+    if mobile.readonly():
+        st.caption("👀 보기 전용 (PC 의 .env 에 DASHBOARD_PASSWORD 를 설정하면 추가·해제 가능)")
     st.divider()
 
     st.markdown("**종목 검색**")
@@ -153,6 +163,9 @@ with st.sidebar:
     with st.expander(f"전체 종목 시세", expanded=False):
         market_list()
     st.divider()
+
+    if netinfo.is_local_client(st.context.ip_address):
+        mobile.phone_panel()
 
     c1, c2 = st.columns([1, 1])
     if c1.button("새로고침", width="stretch"):
@@ -170,6 +183,12 @@ if prices().empty and listing().empty:
     empty_help()
 
 page = st.session_state.get("page", PAGES[0])
+if mobile.compact():
+    # 휴대폰: 사이드바를 열지 않아도 되게 본문 맨 위에 메뉴 줄
+    def _nav():
+        st.session_state["page"] = st.session_state.get("nav_m") or page
+    st.session_state["nav_m"] = page
+    st.pills("메뉴", PAGES, key="nav_m", on_change=_nav, label_visibility="collapsed")
 if page == "관심종목":
     watch.render()
 elif page == "종목 상세":

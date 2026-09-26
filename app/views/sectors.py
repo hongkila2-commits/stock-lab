@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import DOWN, H, PROB_COL, PROB_TITLE, UP, _color, show, stock_table
+from common import DOWN, H, PROB_COL, PROB_TITLE, UP, _color, compact, show, stock_table
 from stocklab import db
 from stocklab.config import db_path
 from stocklab.sectors import sector_flows, sector_summary
@@ -44,10 +44,14 @@ def render() -> None:
         "5일%": summary["ret_5"] * 100, "20일%": summary["ret_20"] * 100,
         PROB_COL: summary["prob"], "외국인연속": summary["streak"].astype(int),
     })
-    signed = ["외국인5일(억)", "외국인20일(억)", "기관5일(억)", "기관20일(억)", "5일%", "20일%", "외국인연속"]
+    if compact():
+        view = view[["업종", "외국인5일(억)", "5일%", PROB_COL]]
+    signed = [c for c in ["외국인5일(억)", "외국인20일(억)", "기관5일(억)", "기관20일(억)", "5일%", "20일%",
+                          "외국인연속"] if c in view]
     styled = view.style.map(_color, subset=signed).format(
-        {**{c: "{:+,.0f}" for c in signed[:4]}, "5일%": "{:+.2f}", "20일%": "{:+.2f}",
-         "외국인연속": "{:+d}", PROB_COL: "{:.2f}"}, na_rep="-")
+        {k: v for k, v in {"외국인5일(억)": "{:+,.0f}", "외국인20일(억)": "{:+,.0f}", "기관5일(억)": "{:+,.0f}",
+                           "기관20일(억)": "{:+,.0f}", "5일%": "{:+.2f}", "20일%": "{:+.2f}",
+                           "외국인연속": "{:+d}", PROB_COL: "{:.2f}"}.items() if k in view}, na_rep="-")
     ev = st.dataframe(styled, hide_index=True, width="stretch", on_select="rerun",
                       selection_mode="single-row", key="t_sectors",
                       height=min(38 + 35 * len(view), 460), column_config={
@@ -66,8 +70,9 @@ def render() -> None:
     who = c1.radio("주체", list(WHO), horizontal=True, key="sec_who")
     col = WHO[who]
 
-    st.markdown(f"**업종 × 최근 20거래일 {who} 순매수 (억원)** — 빨강 순매수 · 파랑 순매도")
-    d20 = daily[daily["date"].isin(sorted(daily["date"].unique())[-20:])]
+    st.markdown(f"**업종 × 최근 {10 if compact() else 20}거래일 {who} 순매수 (억원)** — 빨강 순매수 · 파랑 순매도")
+    n_days = 10 if compact() else 20                  # 휴대폰에선 최근 10일만
+    d20 = daily[daily["date"].isin(sorted(daily["date"].unique())[-n_days:])]
     heat = d20.pivot(index="sector", columns="date", values=col).reindex(summary["sector"][::-1])  # 1위가 맨 위
     lim = float(heat.abs().quantile(0.95).max() or 1)
     fig = go.Figure(go.Heatmap(z=heat.values, x=[d[5:] for d in heat.columns], y=heat.index,

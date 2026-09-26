@@ -137,7 +137,10 @@ class Kakao:
                 return
             raise KakaoError(f"보내기 실패: {body.get('msg') or body}")
 
-    def send(self, text: str, link: str = DASHBOARD_URL) -> int:
+    def send(self, text: str, link: str | None = None) -> int:
+        if link is None:                       # 휴대폰에서 누르면 열리도록 Tailscale 주소 우선
+            from .netinfo import dashboard_url
+            link = dashboard_url()
         parts = split_messages(text)
         for p in parts:
             self._send_one(p, link)

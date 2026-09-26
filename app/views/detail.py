@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from common import (DOWN, H, PROB_TITLE, S, TARGET_LABEL, UP, eok, flows, latest_pred, listing, metric,
+from common import (DOWN, H, PROB_TITLE, S, TARGET_LABEL, UP, compact, eok, flows, latest_pred, listing, metric,
                     my_watchlist, names, prices, q, refresh, signal, stats)
 from stocklab.config import env
 from stocklab.picks import describe
@@ -45,7 +45,9 @@ def header(code: str, demo: bool) -> None:
     title.markdown(f"## {names().get(code, code)} <span style='font-size:0.9rem;color:gray'>"
                    f"{code} · {market}{sector}</span>", unsafe_allow_html=True)
     with btn:
-        if code in S.watchlist:
+        if st.session_state.get("readonly"):
+            st.caption("👀 보기 전용")
+        elif code in S.watchlist:
             st.caption("★ 관심종목 (settings.yaml 에서 관리)")
         elif mine:
             if st.button("★ 관심종목 해제", width="stretch"):
@@ -68,6 +70,9 @@ def header(code: str, demo: bool) -> None:
         l["market_cap"] if l is not None else np.nan)
     p = latest_pred().get(code, np.nan)
 
+    if compact():
+        _compact_cards(price, chg, cap, p, s, qt)
+        return
     m = st.columns(6)
     metric(m[0], "현재가(원)", _fmt(price, "{:,.0f}"), chg)
     m[1].metric("시가총액", eok(cap))
@@ -86,6 +91,30 @@ def header(code: str, demo: bool) -> None:
         m[5].metric("기관 5일", f"{s['orgn_amt']:+,.1f}억")
 
 
+def _compact_cards(price, chg, cap, p, s, qt) -> None:
+    """휴대폰: 요약 지표를 3칸 격자 한 덩어리로 (Streamlit 열은 좁은 화면에서 세로로 쌓여 길어짐)."""
+    def color(v):
+        return UP if v > 0 else DOWN if v < 0 else "inherit"
+    cards = [("현재가", _fmt(price, "{:,.0f}"),
+              "" if pd.isna(chg) else f"<span style='color:{color(chg)}'>{chg:+.2f}%</span>"),
+             ("시가총액", eok(cap), ""),
+             (PROB_TITLE, _fmt(p, "{:.2f}"), signal(p) if pd.notna(p) else "")]
+    if s is not None:
+        cards.append(("52주 위치", "-" if pd.isna(s["pos52"]) else f"{s['pos52'] * 100:.0f}%", ""))
+        for col, lab in (("frgn_amt", "외국인 5일"), ("orgn_amt", "기관 5일")):
+            v = s.get(col, np.nan)
+            cards.append((lab, "-" if pd.isna(v) else
+                          f"<span style='color:{color(v)}'>{v:+,.1f}억</span>", ""))
+    if qt:
+        cards[-1] = ("PER·PBR", f"{_fmt(qt['per'], '{:.1f}')}·{_fmt(qt['pbr'], '{:.1f}')}", "")
+    cells = "".join(
+        f"<div style='padding:6px 4px'><div style='font-size:0.75rem;color:gray'>{k}</div>"
+        f"<div style='font-size:1.15rem;font-weight:600'>{v}</div>"
+        f"<div style='font-size:0.75rem'>{sub}</div></div>" for k, v, sub in cards)
+    st.markdown(f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:2px'>{cells}</div>",
+                unsafe_allow_html=True)
+
+
 def reasons(code: str) -> None:
     ex = q("SELECT * FROM explain WHERE code = ? AND asof = (SELECT MAX(asof) FROM explain WHERE code = ?)",
            (code, code))
@@ -96,7 +125,7 @@ def reasons(code: str) -> None:
     st.caption(("▲ 확률을 올린 요인 · ▼ 내린 요인 (모델 기여도 순)" if has_contrib
                 else "같은 날 분석 대상 전체 중 순위 (예측에 중요한 지표 중 두드러진 것)")
                + f" · 기준일 {ex['asof'].iloc[0]}")
-    cols = st.columns(len(ex))
+    cols = st.columns(len(ex)) if not compact() else [st.container() for _ in range(len(ex))]
     for col, r in zip(cols, ex.itertuples()):
         color = UP if (r.contrib or 0) > 0 else DOWN if (r.contrib or 0) < 0 else "gray"
         col.markdown(f"<div style='border-left:4px solid {color};padding:4px 10px;font-size:0.9rem'>"
@@ -118,7 +147,7 @@ def intraday(code: str) -> None:
     fig.add_trace(go.Candlestick(x=b["minute"], open=b["o"], high=b["h"], low=b["l"], close=b["c"],
                                  increasing_line_color=UP, decreasing_line_color=DOWN, name="1분봉"), 1, 1)
     fig.add_trace(go.Bar(x=b["minute"], y=b["v"], marker_color="#adb5bd", name="거래량"), 2, 1)
-    fig.update_layout(height=360, xaxis_rangeslider_visible=False, showlegend=False,
+    fig.update_layout(height=260 if compact() else 360, xaxis_rangeslider_visible=False, showlegend=False,
                       margin=dict(t=10, b=10))
     st.markdown(f"**📡 {d} 장중 1분봉** · 마지막 {b['minute'].iloc[-1]:%H:%M} · 10초마다 갱신")
     st.plotly_chart(fig, width="stretch")
@@ -149,7 +178,7 @@ def chart(code: str) -> None:
     if len(fl):
         for col, nm, color in (("frgn_amt", "외국인", "#7048e8"), ("orgn_amt", "기관", "#20c997")):
             fig.add_trace(go.Bar(x=fl["date"], y=fl[col] / 100, name=nm, marker_color=color), 3, 1)
-    fig.update_layout(height=680, xaxis_rangeslider_visible=False, barmode="group",
+    fig.update_layout(height=480 if compact() else 680, xaxis_rangeslider_visible=False, barmode="group",
                       margin=dict(t=30, b=10), legend=dict(orientation="h", y=1.02))
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     st.plotly_chart(fig, width="stretch")

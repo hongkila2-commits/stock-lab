@@ -4,8 +4,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from common import (H, PROB_COL, S, TARGET_LABEL, _color, goto, listing, my_watchlist, names, now_kst, q,
-                    rt_quotes, show, stock_table)
+from common import (H, PROB_COL, S, TARGET_LABEL, _color, compact, goto, listing, my_watchlist, names,
+                    now_kst, q, rt_quotes, show, stock_table)
 from stocklab.collectors.listing import is_common
 from stocklab.picks import describe, is_macro
 
@@ -47,10 +47,12 @@ def live_card() -> None:
     df = df.sort_values(["_mine", "등락%"], ascending=[False, False]).drop(columns="_mine")
     df = df.reset_index(drop=True)
     with st.container(border=True):
-        st.markdown(f"**📡 실시간 시세** · {when} · 5초마다 갱신 · ★ 관심종목 · "
-                    f"±{th:g}% 이상이면 카카오톡 알림")
+        st.markdown(f"**📡 실시간 시세** · {when}" + ("" if compact() else
+                    f" · 5초마다 갱신 · ★ 관심종목 · ±{th:g}% 이상이면 카카오톡 알림"))
         codes = df["code"].tolist()
         view = df.drop(columns="code")
+        if compact():
+            view = view[["종목", "현재가", "등락%"]]
         styled = (view.style.map(_color, subset=["등락%"])
                   .map(lambda v: "font-weight:700" if abs(v) >= th else "", subset=["등락%"])
                   .format({"현재가": "{:,.0f}", "등락%": "{:+.2f}", "거래량": "{:,.0f}"}, na_rep="-"))

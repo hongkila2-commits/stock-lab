@@ -231,13 +231,25 @@ def _color(v):
             "약세": f"color: {DOWN}; font-weight: 600"}.get(v, "")
 
 
-def show(df: pd.DataFrame, key: str, height: int | None = None, colcfg: dict | None = None) -> None:
-    """종목 표. 행을 누르면 종목 상세로 이동. df 에 'code' 열이 있어야 한다."""
+COMPACT_COLS = ["순위", "종목", "현재가", "등락%", PROB_COL, "주요 근거"]
+
+
+def compact() -> bool:
+    """휴대폰용 '간단히 보기' (사이드바 토글, 휴대폰 브라우저면 기본 켜짐)."""
+    return bool(st.session_state.get("compact"))
+
+
+def show(df: pd.DataFrame, key: str, height: int | None = None, colcfg: dict | None = None,
+         compact_cols: list[str] | None = None) -> None:
+    """종목 표. 행을 누르면 종목 상세로 이동. df 에 'code' 열이 있어야 한다.
+    간단히 보기면 compact_cols(기본 COMPACT_COLS) 열만."""
     if df.empty:
         st.caption("표시할 종목이 없습니다.")
         return
     codes = df["code"].tolist()
     view = df.reset_index(drop=True)
+    if compact():
+        view = view[["code"] + [c for c in (compact_cols or COMPACT_COLS) if c in view]]
     fmt = {k: v for k, v in NUMFMT.items() if k in view}
     if "시가총액" in view:
         view["시가총액"] = view["시가총액"].map(eok)
@@ -248,6 +260,10 @@ def show(df: pd.DataFrame, key: str, height: int | None = None, colcfg: dict | N
                                                      help=f"{H}거래일 뒤 {TARGET_LABEL}"),
            **(colcfg or {})}
     kw = {"height": height} if height else {}
+    if compact():                                  # 휴대폰 화면 폭(약 360px)에 맞춤
+        cfg.update({"현재가": st.column_config.Column(width=72), "등락%": st.column_config.Column(width=56),
+                    PROB_COL: st.column_config.ProgressColumn(PROB_TITLE[:2], format="%.2f", min_value=0,
+                                                              max_value=1, width=64)})
 
     def go():
         rows = st.session_state[key].selection.rows

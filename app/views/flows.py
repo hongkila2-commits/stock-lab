@@ -25,5 +25,5 @@ def render() -> None:
         "기관5일(억)": sc["orgn_amt_5"] / 100, PROB_COL: sc["code"].map(pr),
     })
     df["신호"] = df[PROB_COL].map(signal)
-    show(df, key="t_flows", height=640, colcfg={
+    show(df, key="t_flows", height=640, compact_cols=["순위", "종목", "점수", "외국인5일(억)", PROB_COL], colcfg={
         "점수": st.column_config.ProgressColumn(format="%.2f", min_value=0, max_value=1)})

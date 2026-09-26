@@ -105,6 +105,7 @@ SAC 는 리눅스 프로그램에는 적용되지 않습니다. 대시보드는 
 | `dashboard.bat` | 브라우저로 대시보드 열기 (http://localhost:8501) |
 | `train.bat` | 모델 강제 재학습 (평소엔 update 가 7일마다 자동 재학습) |
 | `doctor.bat` | 설치 상태 진단 (차단된 패키지 확인) |
+| `mobile_setup.bat` | 휴대폰 접속용 방화벽 허용 (관리자 권한으로 한 번) |
 | `schedule.bat` | 평일 **08:55 realtime**, **18:10 update** 자동 실행 등록 (PC 가 켜져 있어야 함) |
 
 **첫 update 는 오래 걸립니다.** 시가총액 상위 300종목 × 3년치 일봉을 받느라 모의투자 기준 약 25분.
@@ -194,6 +195,36 @@ universe:           # 자동 선정과 별개로 항상 분석할 종목
 로그인은 약 2개월 유지되고, 매일 쓰면 자동 연장됩니다. 끊기면 `kakao_setup.bat` 을 다시 실행하세요.
 알림이 실패해도 update·실시간은 멈추지 않습니다(`logs\stocklab.log` 에 사유 기록).
 
+## 4-3. 휴대폰으로 보기 (집 밖에서도)
+
+PC 에서 `dashboard.bat` 이 실행 중이면 휴대폰 브라우저로 같은 화면을 볼 수 있습니다.
+집 밖(LTE·5G)에서는 **Tailscale**(무료 개인 VPN)로 연결합니다. 내 PC 와 내 휴대폰끼리만 연결되고
+인터넷에 공개되지 않아 안전합니다.
+
+**처음 설정 (15분, 한 번만)**
+1. `.env` 에 휴대폰 접속용 비밀번호 입력: `DASHBOARD_PASSWORD=원하는비밀번호`
+   (비워 두면 휴대폰에서는 **보기 전용** — 관심종목 추가·해제 불가)
+2. **`mobile_setup.bat` 을 우클릭 → 관리자 권한으로 실행** (Windows 방화벽에서 8501 포트 허용)
+3. **Tailscale 설치**
+   - PC: https://tailscale.com/download → Windows 용 설치 → Google 등 계정으로 로그인
+   - 휴대폰: 앱스토어/플레이스토어에서 **Tailscale** 설치 → **PC 와 같은 계정**으로 로그인 → 연결 켜기
+4. `dashboard.bat` 실행 → PC 화면 왼쪽 사이드바 **📱 휴대폰으로 보기** 를 펼치면
+   - **집 밖에서도 (Tailscale)** `http://100.x.x.x:8501` 과 QR 코드
+   - **같은 와이파이에서** `http://192.168.x.x:8501` 과 QR 코드
+5. 휴대폰 카메라로 QR 을 찍어 열고 비밀번호 입력
+6. (추천) 휴대폰 브라우저 메뉴 → **홈 화면에 추가** → 앱처럼 바로 열기
+
+**휴대폰 화면**
+- 휴대폰에서 열면 자동으로 **간단히 보기**: 표는 종목·현재가·등락·강세 확률만, 요약 지표는 3칸 격자,
+  메뉴는 화면 맨 위 버튼 줄. PC 에서도 사이드바 **📱 간단히 보기** 로 켜고 끌 수 있습니다.
+- 카카오톡 알림의 '대시보드 열기' 버튼도 Tailscale 주소로 열립니다. 카카오 개발자 앱의
+  **플랫폼 → Web → 사이트 도메인** 에 그 주소(`http://100.x.x.x:8501`)도 추가해 두세요.
+
+**주의**
+- PC 가 켜져 있고 `dashboard.bat` 이 실행 중이어야 합니다. **절전 모드**에 들어가면 접속이 끊기니
+  설정 → 시스템 → 전원 → 절전을 '안 함'(또는 충분히 길게)으로 바꾸세요.
+- 공유기 포트포워딩이나 공개 터널로 인터넷에 여는 방법은 권하지 않습니다(누구나 접속 시도 가능).
+
 ---
 
 ## 5. 예측 모델 — 무엇을, 어떻게
@@ -256,10 +287,12 @@ stock-lab/
 │  ├─ sectors.py           업종 분류·업종별 수급 집계
 │  ├─ realtime.py          장중 실시간 시세 (WebSocket / 조회 전환)
 │  ├─ kakao.py · alerts.py 카카오톡 알림 · 알림 내용
+│  ├─ netinfo.py           휴대폰 접속 주소·휴대폰 판별·비밀번호
 │  ├─ demo.py              가상 데이터
 │  └─ cli.py               python -m stocklab <check|update|train|predict|demo>
 ├─ app/dashboard.py        Streamlit 대시보드 (사이드바·페이지 이동)
 ├─ app/common.py           대시보드 공통 (데이터·표·이동)
+├─ app/mobile.py           휴대폰 접속 (비밀번호·간단히 보기·QR)
 ├─ app/views/              페이지별 화면 (watch·detail·sectors·flows·model·macro)
 ├─ scripts/doctor.py       설치 진단 (스마트 앱 컨트롤 차단 확인)
 ├─ tests/                  자동 검사 (python -m pytest)
@@ -287,6 +320,8 @@ stock-lab/
 | 카카오 테스트 메시지 실패 (-402, 권한 없음) | 동의항목에서 '카카오톡 메시지 전송' 을 켜고 `kakao_setup.bat` 다시 실행 |
 | 사이드바가 계속 '⚪ 실시간 꺼짐' | `realtime.bat` 창의 메시지 확인. 장 시간(평일 09:00~15:30)에만 동작합니다 |
 | 실시간이 '30초 조회' 로만 동작 | 실시간(WebSocket) 연결 실패 — 방화벽이 `ops.koreainvestment.com` 포트 31000(모의)/21000(실전)을 막는지 확인. 조회 방식으로도 기능은 같습니다 |
+| 휴대폰에서 주소가 안 열림 | ① PC 에서 `dashboard.bat` 실행 중인지 ② `mobile_setup.bat` 을 **관리자 권한**으로 실행했는지 ③ 집 밖이면 휴대폰 Tailscale 이 '연결됨'인지 ④ PC 가 절전 모드가 아닌지 |
+| 휴대폰에서 비밀번호 화면이 안 나오고 '보기 전용' | `.env` 에 `DASHBOARD_PASSWORD` 가 비어 있음. 입력 후 `dashboard.bat` 을 다시 실행 |
 | 처음부터 다시 받고 싶음 | `data\market.sqlite` 삭제 후 update |
 
 실행 기록은 `logs\stocklab.log` 에 남습니다. 문제가 생기면 이 파일 끝부분을 확인하세요.

@@ -25,6 +25,7 @@ PACKAGES = [
     ("requests", "requests", True), ("yaml", "pyyaml", True), ("dotenv", "python-dotenv", True),
     ("pyarrow", "pyarrow", True), ("plotly", "plotly", True), ("streamlit", "streamlit", True),
     ("websocket", "websocket-client", True),
+    ("qrcode", "qrcode", False),
     ("tzdata", "tzdata", os.name == "nt"),        # Windows 에는 시간대 정보가 없어서 필요
     ("lightgbm", "lightgbm", False),
 ]

@@ -11,4 +11,4 @@ if errorlevel 1 (
   exit /b 1
 )
 start "" cmd /c "timeout /t 5 >nul & start http://localhost:8501"
-.venv\Scripts\python -m streamlit run app\dashboard.py
+.venv\Scripts\python -m streamlit run app\dashboard.py --server.address 0.0.0.0
