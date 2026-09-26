@@ -102,11 +102,22 @@ def cmd_update(args) -> int:
              "source": ["watchlist" if c in s.watchlist else "universe" for c in stocks]}))
         years = int(s.collect["history_years"])
         if not args.skip_market:
-            kis = _kis()
-            log.info("① 주가 수집 (%d종목)", len(stocks))
+            # 키·연결 문제를 종목마다 반복하지 않도록 먼저 한 번 확인한다
+            try:
+                kis = _kis()
+                kis.token()
+            except Exception as e:
+                log.error("한국투자증권 연결 실패: %s", e)
+                log.error("→ .env 의 KIS_APP_KEY / KIS_APP_SECRET / KIS_ENV 를 확인하고 check.bat 을 실행하세요.")
+                return 1
+            log.info("① 주가 수집 (%d종목) — 첫 실행은 10분 정도 걸립니다", len(stocks))
             market.update_prices(conn, kis, list(stocks), years)
             log.info("② 투자자 수급 수집")
             market.update_flows(conn, kis, list(stocks))
+        n_prices = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+        if n_prices == 0:
+            log.error("주가 데이터가 0건입니다. 위의 '수집 실패' 메시지를 확인하세요.")
+            return 1
         log.info("③ 거시지표 수집")
         macro.update_macro(conn, years)
 
@@ -149,10 +160,14 @@ def cmd_demo(args) -> int:
     from . import demo
     from .config import db_path
     path = db_path()
-    if path.exists() and path.name == "market.sqlite":
+    if path.name == "market.sqlite":
         log.error("실제 데이터 DB 를 덮어쓰지 않도록 멈췄습니다. demo.bat 으로 실행하세요.")
         return 1
     with db.session() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+        if args.if_empty and n:
+            log.info("데모 데이터가 이미 있습니다 (%d행) → %s", n, path)
+            return 0
         stocks = demo.generate(conn)
         log.info("데모 종목 %d개 생성 → %s", len(stocks), path)
         screener.run(conn)
@@ -170,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     u.set_defaults(fn=cmd_update)
     sub.add_parser("train").set_defaults(fn=cmd_train)
     sub.add_parser("predict").set_defaults(fn=cmd_predict)
-    sub.add_parser("demo").set_defaults(fn=cmd_demo)
+    d = sub.add_parser("demo")
+    d.add_argument("--if-empty", action="store_true", help="데모 데이터가 없을 때만 생성")
+    d.set_defaults(fn=cmd_demo)
     args = p.parse_args(argv)
     return args.fn(args)

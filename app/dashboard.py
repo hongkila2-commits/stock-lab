@@ -71,10 +71,36 @@ with st.sidebar:
                f"강세 ≥ {S.model['bullish']:.2f} / 약세 ≤ {S.model['bearish']:.2f}")
     st.caption("⚠️ 참고용 통계 모델입니다. 투자 판단과 책임은 본인에게 있습니다.")
 
+def empty_help() -> None:
+    """데이터가 없을 때: 무엇을 읽고 있는지, 무엇이 비었는지, 최근 오류는 무엇인지 보여준다."""
+    path = db_path()
+    st.warning("표시할 주가 데이터가 없습니다.")
+    st.markdown(f"**읽고 있는 파일**: `{path}`")
+    if not path.exists():
+        st.markdown("→ 파일이 아직 없습니다. 수집을 한 번도 실행하지 않았습니다.")
+    else:
+        counts = {t: q(f"SELECT COUNT(*) AS n FROM {t}")["n"].iloc[0]
+                  for t in ("prices", "flows", "macro", "news", "predictions")}
+        st.markdown("**저장된 행 수**: " + " · ".join(f"{k} {v:,}" for k, v in counts.items()))
+    log_file = Path(__file__).resolve().parent.parent / "logs" / "stocklab.log"
+    if log_file.exists():
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        bad = [ln for ln in lines if " ERROR " in ln or " WARNING " in ln][-12:]
+        if bad:
+            st.markdown("**최근 오류·경고** (`logs/stocklab.log`)")
+            st.code("\n".join(bad), language=None)
+    st.markdown(
+        "**해결 방법**\n"
+        "1. 실제 데이터: `check.bat` 으로 한국투자증권 연결이 `[OK]` 인지 확인 → `update.bat` 실행 "
+        "(첫 실행 약 10분, 창에 `완료` 가 나올 때까지 닫지 마세요) → 여기서 **새로고침**\n"
+        "2. 가상 데이터로 화면만 보기: 이 창을 닫고 `demo.bat` 실행\n\n"
+        "`update.bat` 과 `dashboard.bat` 은 서로 다른 창입니다. 수집이 끝난 뒤 사이드바의 **새로고침**을 누르세요.")
+    st.stop()
+
+
 prices = q("SELECT * FROM prices")
 if prices.empty:
-    st.info("데이터가 없습니다. `update.bat`(실제) 또는 `demo.bat`(가상)을 먼저 실행하세요.")
-    st.stop()
+    empty_help()
 prices["date"] = pd.to_datetime(prices["date"])
 prices = prices.sort_values(["code", "date"])
 
