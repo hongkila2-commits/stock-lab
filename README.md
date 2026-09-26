@@ -42,6 +42,55 @@
 ### 1-3. 키 없이 먼저 구경하기
 **`demo.bat`** 더블클릭 → 가상 데이터로 대시보드가 열립니다. 실제 데이터와 섞이지 않습니다.
 
+### 1-4. "스마트 앱 컨트롤이 차단했습니다" 가 뜰 때
+
+Windows 11 의 **스마트 앱 컨트롤(SAC)** 은 전자서명이 없거나 사용 기록이 적은 실행 파일·DLL 을 막습니다.
+이 프로그램이 설치하는 파이썬 패키지 중 일부(계산용 DLL)가 대상이 될 수 있고, 인터넷에서 받은 ZIP 을
+그대로 풀면 모든 파일에 '인터넷에서 받은 파일' 표시가 붙어 `.bat` 실행이 막히기도 합니다.
+
+**① ZIP 차단 해제 후 다시 풀기** (가장 먼저)
+1. 압축을 풀었던 `stock-lab` 폴더를 지웁니다.
+2. 받은 ZIP 파일 **우클릭 → 속성 → 아래쪽 '차단 해제' 체크 → 확인**
+3. 다시 압축을 풀고 `setup.bat` 실행
+
+**② 설치 마지막 단계 `[3/3]` 진단 결과 보기**
+
+`setup.bat` 이 끝에 패키지를 하나씩 불러와 보고 결과를 출력합니다 (나중에 `doctor.bat` 으로 다시 볼 수 있음).
+```
+스마트 앱 컨트롤  켜짐 (차단 중)
+[OK]   pandas         2.3.1
+[차단] lightgbm       DLL load failed ... [WinError 4551] 응용 프로그램 제어 정책에서 이 파일을 차단했습니다
+```
+- **`lightgbm` 만 [차단]** → 무시해도 됩니다. 예측 모델이 scikit-learn 엔진으로 자동 대체되고,
+  시험 결과 성능 차이는 거의 없습니다(AUC 0.557 → 0.552).
+- **필수 패키지(pandas·numpy·pyarrow·streamlit 등)가 [차단]** → 아래 ③ 또는 ④
+
+**③ (권장) WSL — Windows 안의 리눅스에서 실행**
+
+SAC 는 리눅스 프로그램에는 적용되지 않습니다. 대시보드는 Windows 브라우저에서 그대로 열립니다.
+1. 시작 메뉴에서 **PowerShell 을 관리자 권한으로** 열고 `wsl --install` → 재부팅 → Ubuntu 사용자 이름·암호 설정
+2. Ubuntu 창에서 (ZIP 을 `C:\stock-lab` 에 풀었다고 가정):
+   ```bash
+   sudo apt update && sudo apt install -y python3-venv
+   cp -r /mnt/c/stock-lab ~/stock-lab && cd ~/stock-lab
+   python3 -m venv .venv && . .venv/bin/activate
+   pip install -r requirements.txt lightgbm
+   python scripts/doctor.py
+   cp .env.example .env && nano .env          # 키 입력 후 Ctrl+O, Enter, Ctrl+X
+   python -m stocklab check
+   python -m stocklab update
+   streamlit run app/dashboard.py             # Windows 브라우저에서 http://localhost:8501
+   ```
+3. 매일 자동 실행(Windows 작업 스케줄러):
+   ```
+   schtasks /Create /TN "StockLab-Daily" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 18:10 /F /TR "wsl -d Ubuntu -- bash -lc 'cd ~/stock-lab && .venv/bin/python -m stocklab update'"
+   ```
+
+**④ 스마트 앱 컨트롤 끄기** — 설정 → 개인 정보 및 보안 → Windows 보안 → 앱 및 브라우저 컨트롤 →
+스마트 앱 컨트롤 설정 → 끄기.
+⚠️ Windows 버전에 따라 **한 번 끄면 Windows 를 다시 설치하기 전에는 켤 수 없습니다.**
+보안 기능을 영구히 잃을 수 있으므로 ③ 을 먼저 권합니다. 회사 PC 라면 IT 부서 정책을 따르세요.
+
 ---
 
 ## 2. 매일 쓰는 법
@@ -51,6 +100,7 @@
 | `update.bat` | 수집 → 외국인 스크리닝 → 예측 (**장 마감 후 하루 한 번**) |
 | `dashboard.bat` | 브라우저로 대시보드 열기 (http://localhost:8501) |
 | `train.bat` | 모델 강제 재학습 (평소엔 update 가 7일마다 자동 재학습) |
+| `doctor.bat` | 설치 상태 진단 (차단된 패키지 확인) |
 | `schedule.bat` | 평일 18:10 에 update 자동 실행 등록 (PC 가 켜져 있어야 함) |
 
 **첫 update 는 오래 걸립니다.** 60여 종목 × 5년치 일봉을 받느라 모의투자 기준 10분 정도.
@@ -150,11 +200,12 @@ stock-lab/
 │  ├─ collectors/          market(주가·수급) macro(거시) news(뉴스) dart(공시)
 │  ├─ sentiment.py         뉴스 감성 (내장 사전 / KR-FinBERT 선택)
 │  ├─ features.py          특징값 생성 (누설 방지)
-│  ├─ model.py             LightGBM + 시간 순 검증
+│  ├─ model.py             LightGBM(없으면 scikit-learn) + 시간 순 검증
 │  ├─ screener.py          외국인 매수 강도 순위
 │  ├─ demo.py              가상 데이터
 │  └─ cli.py               python -m stocklab <check|update|train|predict|demo>
 ├─ app/dashboard.py        Streamlit 대시보드
+├─ scripts/doctor.py       설치 진단 (스마트 앱 컨트롤 차단 확인)
 ├─ tests/                  자동 검사 (python -m pytest)
 ├─ data/                   market.sqlite, 토큰 캐시 (GitHub 제외)
 ├─ models/                 학습된 모델 (GitHub 제외)
@@ -170,6 +221,7 @@ stock-lab/
 | `EGW00133` | 토큰은 1분에 1번만 발급됩니다. 1분 뒤 다시 실행 (자동으로 한 번 기다렸다 재시도함) |
 | `EGW00201` | 초당 호출 초과. 자동 재시도됩니다. 계속되면 `stocklab/kis.py` 의 `MIN_INTERVAL` paper 값을 0.8 로 |
 | "유효하지 않은 AppKey" 류의 오류 | `.env` 의 키, `KIS_ENV=paper`(모의투자 키) 확인. 키 앞뒤 공백 제거 |
+| "스마트 앱 컨트롤" 차단 / `WinError 4551` | 위 **1-4** 참고. `doctor.bat` 으로 어떤 패키지가 막혔는지 확인 |
 | 거시지표 일부가 비어 있음 | 야후 파이낸스(비공식)가 일시적으로 막힌 경우. 주요 지표는 FRED 로 자동 대체 |
 | 대시보드 숫자가 안 바뀜 | 사이드바 **새로고침** (5분 캐시) |
 | 뉴스·공시 탭이 비어 있음 | `.env` 에 네이버·DART 키 입력. 관심종목과 외국인 상위 종목만 수집됨 |

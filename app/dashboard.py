@@ -289,7 +289,7 @@ with tab_model:
                          hide_index=True, width="stretch")
         imp = pd.Series(mm["importance"]).head(20)[::-1]
         fig = go.Figure(go.Bar(x=imp.values, y=imp.index, orientation="h", marker_color="#5c7cfa"))
-        fig.update_layout(title="중요 특징값 Top 20 (정보 이득)", height=560, margin=dict(l=10, t=40))
+        fig.update_layout(title="중요 특징값 Top 20 (" + ("정보 이득" if mm.get("engine", "lightgbm") == "lightgbm" else "순열 중요도") + ")", height=560, margin=dict(l=10, t=40))
         st.plotly_chart(fig, width="stretch")
         st.caption("frgn_* 외국인 · orgn_* 기관 수급 / ret_* 수익률 / ma_gap_* 이동평균 이격 / *_r1·r5 거시지표 변화율 / "
                    "news_* 뉴스 감성 / dart_* 공시")

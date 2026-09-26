@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -38,13 +39,24 @@ FRED_FALLBACK = {"USDKRW": "DEXKOUS", "US10Y": "DGS10", "VIX": "VIXCLS", "SP500"
 
 
 def _yahoo(ticker: str, start: date) -> pd.Series:
-    import yfinance as yf
-    hist = yf.Ticker(ticker).history(start=start.isoformat(), auto_adjust=False)
-    if hist is None or hist.empty:
+    """야후 파이낸스 차트 API 직접 호출 (yfinance 패키지 없이 — 순수 파이썬)."""
+    t0 = int(datetime.combine(start, datetime.min.time(), timezone.utc).timestamp())
+    r = requests.get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(ticker)}",
+        params={"period1": t0, "period2": int(datetime.now(timezone.utc).timestamp()),
+                "interval": "1d", "events": "history"},
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=20,
+    )
+    r.raise_for_status()
+    res = (r.json().get("chart", {}).get("result") or [None])[0]
+    if not res or not res.get("timestamp"):
         return pd.Series(dtype=float)
-    s = hist["Close"].dropna()
-    s.index = pd.Index(s.index.strftime("%Y-%m-%d"))
-    return s
+    tz = res.get("meta", {}).get("exchangeTimezoneName") or "UTC"
+    # 거래소 현지 날짜로 변환 (코스피 → 서울, 나스닥 → 뉴욕)
+    idx = pd.to_datetime(res["timestamp"], unit="s", utc=True).tz_convert(tz).strftime("%Y-%m-%d")
+    close = res["indicators"]["quote"][0]["close"]
+    s = pd.Series(close, index=idx, dtype=float).dropna()
+    return s[~s.index.duplicated(keep="last")]
 
 
 def _fred(series_id: str, start: date) -> pd.Series:

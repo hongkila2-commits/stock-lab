@@ -1,4 +1,8 @@
-"""주가 방향 예측 모델 (LightGBM) + 시간 순서를 지키는 검증(walk-forward).
+"""주가 방향 예측 모델 + 시간 순서를 지키는 검증(walk-forward).
+
+엔진: LightGBM 이 설치·로드되면 사용하고, 아니면 scikit-learn 의
+HistGradientBoosting 으로 자동 대체한다. (Windows 스마트 앱 컨트롤이 LightGBM DLL 을
+차단하는 경우가 있어서 — 두 엔진 모두 같은 원리의 부스팅 트리라 성능 차이는 작다)
 
 검증 방식
   과거 구간으로 학습 → 바로 다음 구간으로 평가 → 창을 앞으로 옮기며 반복.
@@ -16,7 +20,8 @@ from datetime import datetime
 import joblib
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import accuracy_score, roc_auc_score
 
 from .config import model_dir
@@ -24,16 +29,53 @@ from .features import feature_columns
 
 log = logging.getLogger(__name__)
 
+try:
+    from lightgbm import LGBMClassifier
+    ENGINE = "lightgbm"
+except (ImportError, OSError) as e:   # OSError: DLL 로드 차단(스마트 앱 컨트롤 등)
+    log.info("LightGBM 을 쓸 수 없어 scikit-learn 엔진을 사용합니다 (%s)", str(e)[:80])
+    ENGINE = "sklearn"
+
 PARAMS = dict(
     n_estimators=300, learning_rate=0.03, num_leaves=15, min_child_samples=50,
     subsample=0.8, subsample_freq=1, colsample_bytree=0.8, reg_lambda=1.0,
     verbose=-1, random_state=42,
 )
+SK_PARAMS = dict(
+    max_iter=300, learning_rate=0.03, max_leaf_nodes=15, min_samples_leaf=50,
+    l2_regularization=1.0, max_features=0.8, early_stopping=False, random_state=42,
+)
 MIN_ROWS = 500
 
 
-def _model() -> LGBMClassifier:
-    return LGBMClassifier(**PARAMS)
+class SkModel:
+    """scikit-learn 엔진. 학습 구간에서 값이 하나도 없는 특징(예: 수집 시작 전 뉴스)은
+    이 엔진이 처리하지 못하므로 빼고 학습한다. (LightGBM 은 알아서 무시한다)"""
+
+    def fit(self, X: pd.DataFrame, y):
+        self.cols = [c for c in X.columns if X[c].notna().any()]
+        self.est = HistGradientBoostingClassifier(**SK_PARAMS).fit(X[self.cols], y)
+        return self
+
+    def predict_proba(self, X: pd.DataFrame):
+        return self.est.predict_proba(X[self.cols])
+
+
+def _model():
+    if ENGINE == "lightgbm":
+        return LGBMClassifier(**PARAMS)
+    return SkModel()
+
+
+def _importance(model, X: pd.DataFrame, y: pd.Series) -> pd.Series:
+    if ENGINE == "lightgbm":
+        vals = model.booster_.feature_importance("gain")
+        return pd.Series(vals, index=X.columns).sort_values(ascending=False)
+    # 최근 데이터로 순열 중요도 (그 특징을 뒤섞었을 때 성능이 얼마나 떨어지나)
+    Xs, ys = X[model.cols].tail(5000), y.tail(5000)
+    vals = permutation_importance(model.est, Xs, ys, scoring="roc_auc", n_repeats=3,
+                                  random_state=42).importances_mean
+    return pd.Series(vals, index=model.cols).sort_values(ascending=False)
 
 
 def walk_forward(panel: pd.DataFrame, horizon: int, n_splits: int = 5,
@@ -83,10 +125,10 @@ def train(panel: pd.DataFrame, horizon: int, target: str) -> dict:
     cv = walk_forward(panel, horizon)
     model = _model().fit(data[feats], data["y"])
     model_id = datetime.now().strftime("%Y%m%d-%H%M")
-    imp = (pd.Series(model.booster_.feature_importance("gain"), index=feats)
-           .sort_values(ascending=False))
+    recent = data.sort_values("date")
+    imp = _importance(model, recent[feats], recent["y"])
     meta = {
-        "model_id": model_id, "horizon": horizon, "target": target, "features": feats,
+        "model_id": model_id, "engine": ENGINE, "horizon": horizon, "target": target, "features": feats,
         "n_rows": int(len(data)), "n_codes": int(data["code"].nunique()),
         "data_from": str(data["date"].min().date()), "data_to": str(data["date"].max().date()),
         "cv": json.loads(cv.to_json(orient="records", date_format="iso")),

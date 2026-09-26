@@ -30,9 +30,7 @@ def _setup_logging() -> None:
               logging.FileHandler(LOG_DIR / "stocklab.log", encoding="utf-8")):
         h.setFormatter(fmt)
         root.addHandler(h)
-    for noisy in ("urllib3", "peewee"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-    logging.getLogger("yfinance").setLevel(logging.CRITICAL)  # 실패는 macro.py 가 한 줄로 알림
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def _kis():

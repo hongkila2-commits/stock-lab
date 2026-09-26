@@ -67,3 +67,28 @@ def test_lexicon():
     assert lexicon_score("삼성전자, <b>흑자전환</b> 성공…신고가 돌파") > 0
     assert lexicon_score("LG디스플레이 적자 확대 우려") < 0
     assert lexicon_score("오늘의 날씨") == 0
+
+
+def test_yahoo_chart_parsing(monkeypatch):
+    from datetime import date
+
+    from stocklab.collectors import macro
+
+    def ts(utc: str) -> int:
+        return int(pd.Timestamp(utc, tz="UTC").timestamp())
+
+    class R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            # 뉴욕 장 마감(16:00 EDT = 20:00 UTC) 타임스탬프 → 뉴욕 현지 날짜여야 함
+            return {"chart": {"result": [{
+                "meta": {"exchangeTimezoneName": "America/New_York"},
+                "timestamp": [ts("2025-09-24 20:00"), ts("2025-09-25 20:00"), ts("2025-09-25 20:00")],
+                "indicators": {"quote": [{"close": [100.0, None, 101.5]}]},
+            }]}}
+
+    monkeypatch.setattr(macro.requests, "get", lambda *a, **k: R())
+    s = macro._yahoo("^GSPC", date(2025, 9, 1))
+    assert s.to_dict() == {"2025-09-24": 100.0, "2025-09-25": 101.5}
