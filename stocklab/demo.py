@@ -98,6 +98,7 @@ def generate(conn, n_days: int = 750, seed: int = 7, n_stocks: int = 60,
     db.upsert(conn, "stocks", pd.DataFrame({"code": list(stocks), "name": list(stocks.values()),
                                             "source": "demo"}))
     _listing(conn, pd.concat(price_rows), stocks, n_listing_only, rng)
+    _sectors_and_realtime(conn, pd.concat(price_rows), stocks, rng)
     conn.executemany("INSERT OR IGNORE INTO user_watchlist VALUES (?, ?)",
                      [(c, f"2000-01-0{i + 1}") for i, c in enumerate(list(stocks)[:5])])
     db.set_meta(conn, "demo", "1")
@@ -135,3 +136,38 @@ def _listing(conn, prices: pd.DataFrame, stocks: dict[str, str], n_extra: int, r
     df["source"] = "데모"
     conn.execute("DELETE FROM listing")
     db.upsert(conn, "listing", df)
+
+
+SECTORS = ["전기·전자", "화학", "운수장비", "의약품", "금융업", "서비스업", "철강·금속",
+           "유통업", "건설업", "통신업"]
+
+
+def _sectors_and_realtime(conn, prices: pd.DataFrame, stocks: dict[str, str], rng) -> None:
+    """가상 업종 배정 + 마지막 거래일의 가상 1분봉·실시간 체결 (화면 확인용)."""
+    codes = list(stocks)
+    db.upsert(conn, "sectors", pd.DataFrame({
+        "code": codes, "sector": [SECTORS[i % len(SECTORS)] for i in range(len(codes))],
+        "updated": datetime.now().isoformat()}))
+    last = prices.sort_values("date").groupby("code").tail(2)
+    day = prices["date"].max()
+    minutes = pd.date_range(f"{day} 09:00", f"{day} 15:30", freq="1min")
+    bars, quotes = [], []
+    for code in codes[:15]:
+        g = last[last["code"] == code]
+        prev, close = float(g["close"].iloc[0]), float(g["close"].iloc[-1])
+        noise = np.cumsum(rng.normal(0, 0.0015, len(minutes))) * 0.3
+        noise -= np.linspace(0, noise[-1], len(minutes))           # 끝값이 종가에 맞도록 (브리지)
+        path = prev * np.exp(np.linspace(0, np.log(close / prev), len(minutes)) + noise)
+        vols = rng.lognormal(7, 1, len(minutes)).round()
+        for m, p0, p1, v in zip(minutes, np.r_[prev, path[:-1]], path, vols):
+            bars.append({"code": code, "minute": m.strftime("%Y-%m-%d %H:%M"), "o": p0,
+                         "h": max(p0, p1) * 1.001, "l": min(p0, p1) * 0.999, "c": p1, "v": v})
+        quotes.append({"code": code, "ts": f"{day} 15:30:00", "price": close,
+                       "change_pct": round((close / prev - 1) * 100, 2), "open": path[0],
+                       "high": path.max(), "low": path.min(), "volume": vols.sum(),
+                       "value": vols.sum() * close / 1e6})
+    db.upsert(conn, "rt_bars", pd.DataFrame(bars))
+    db.upsert(conn, "rt_quotes", pd.DataFrame(quotes))
+    db.set_meta(conn, "rt_mode", "demo")
+    db.set_meta(conn, "rt_heartbeat", f"{day}T15:30:00")
+    db.set_meta(conn, "rt_count", str(len(quotes)))

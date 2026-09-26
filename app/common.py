@@ -14,7 +14,8 @@ from stocklab import db  # noqa: E402
 from stocklab.config import db_path, load_settings  # noqa: E402
 
 UP, DOWN = "#d6336c", "#1c7ed6"   # 한국 관례: 상승 빨강, 하락 파랑
-PAGES = ["관심종목", "종목 상세", "외국인 수급", "예측 모델", "거시지표"]
+PAGES = ["관심종목", "종목 상세", "업종 수급", "외국인 수급", "예측 모델", "거시지표"]
+RT_FRESH_SEC = 120        # 실시간 값이 이 시간 안이면 표의 현재가를 실시간 값으로
 S = load_settings()
 H = int(S.model["horizon"])
 TARGET_LABEL = "코스피 대비 강세 확률" if S.model["target"] == "excess" else "상승 확률"
@@ -25,6 +26,16 @@ PROB_TITLE = "강세 확률" if S.model["target"] == "excess" else "상승 확�
 # ── 데이터 ──────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def q(sql: str, params: tuple = ()) -> pd.DataFrame:
+    if not db_path().exists():
+        return pd.DataFrame()
+    conn = db.connect()
+    try:
+        return db.query(conn, sql, params)
+    finally:
+        conn.close()
+
+
+def _read(sql: str, params: tuple = ()) -> pd.DataFrame:
     if not db_path().exists():
         return pd.DataFrame()
     conn = db.connect()
@@ -105,6 +116,38 @@ def stats() -> pd.DataFrame:
     return out
 
 
+@st.cache_data(ttl=4)
+def rt_quotes() -> pd.DataFrame:
+    """장중 실시간 최신 체결 (realtime.bat 이 채움). index = code."""
+    r = _read("SELECT * FROM rt_quotes")
+    return r.set_index("code") if not r.empty else r
+
+
+def rt_status() -> dict:
+    m = _read("SELECT key, value FROM meta WHERE key LIKE 'rt_%'")
+    return dict(zip(m["key"], m["value"])) if not m.empty else {}
+
+
+def now_kst():
+    from stocklab.realtime import now_kst as _n
+    return _n()
+
+
+def rt_fresh() -> pd.DataFrame:
+    """RT_FRESH_SEC 이내에 받은 실시간 값만."""
+    r = rt_quotes()
+    if r.empty:
+        return r
+    age = (now_kst() - pd.to_datetime(r["ts"])).dt.total_seconds()
+    return r[age <= RT_FRESH_SEC]
+
+
+def goto(code: str) -> None:
+    """fragment 안에서 종목 상세로 이동: 다음 전체 실행 맨 앞에서 처리된다."""
+    st.session_state["goto"] = code
+    st.rerun()
+
+
 def my_watchlist() -> list[str]:
     """settings.yaml 관심종목 + 대시보드에서 추가한 종목 (데이터가 전혀 없는 종목은 제외)."""
     user = q("SELECT code FROM user_watchlist ORDER BY added_at")
@@ -133,18 +176,21 @@ def eok(x) -> str:
 # ── 표 ─────────────────────────────────────────────────
 def stock_table(codes: list[str], extra: dict[str, dict] | None = None) -> pd.DataFrame:
     """공통 종목 표. 시세 이력이 있으면 그 값(당일), 없으면 전체 목록 값."""
-    st_, li, pr = stats(), listing(), latest_pred()
+    st_, li, pr, rt = stats(), listing(), latest_pred(), rt_fresh()
     rows = []
     for c in codes:
         has = c in st_.index
         r = st_.loc[c] if has else None
         l = li.loc[c] if c in li.index else None
         p = pr.get(c, np.nan)
+        live = rt.loc[c] if c in rt.index else None       # 장중 실시간 값이 있으면 우선
         rows.append({
-            "code": c, "종목": names().get(c, c),
+            "code": c, "종목": names().get(c, c) + (" ●" if live is not None else ""),
             "시장": l["market"] if l is not None else "",
-            "현재가": r["close"] if has else (l["close"] if l is not None else np.nan),
-            "등락%": r["r1"] * 100 if has else (l["change_pct"] if l is not None else np.nan),
+            "현재가": live["price"] if live is not None else (
+                r["close"] if has else (l["close"] if l is not None else np.nan)),
+            "등락%": live["change_pct"] if live is not None else (
+                r["r1"] * 100 if has else (l["change_pct"] if l is not None else np.nan)),
             "5일%": r["r5"] * 100 if has else np.nan,
             "20일%": r["r20"] * 100 if has else np.nan,
             "시가총액": l["market_cap"] if l is not None else np.nan,

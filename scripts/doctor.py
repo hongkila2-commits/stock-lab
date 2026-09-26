@@ -24,6 +24,8 @@ PACKAGES = [
     ("sklearn", "scikit-learn", True), ("joblib", "joblib", True),
     ("requests", "requests", True), ("yaml", "pyyaml", True), ("dotenv", "python-dotenv", True),
     ("pyarrow", "pyarrow", True), ("plotly", "plotly", True), ("streamlit", "streamlit", True),
+    ("websocket", "websocket-client", True),
+    ("tzdata", "tzdata", os.name == "nt"),        # Windows 에는 시간대 정보가 없어서 필요
     ("lightgbm", "lightgbm", False),
 ]
 BLOCK_HINTS = ("4551", "application control", "응용 프로그램 제어", "차단")

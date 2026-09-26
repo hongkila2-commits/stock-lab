@@ -39,7 +39,9 @@ def header(code: str, demo: bool) -> None:
     mine = code in my_watchlist()
     title, btn = st.columns([4, 1])
     market = l["market"] if l is not None else ""
-    sector = f" · {qt['sector']}" if qt and qt.get("sector") else ""
+    sec = q("SELECT sector FROM sectors WHERE code = ?", (code,))
+    sector_name = sec["sector"].iloc[0] if not sec.empty else (qt.get("sector") if qt else "")
+    sector = f" · {sector_name}" if sector_name else ""
     title.markdown(f"## {names().get(code, code)} <span style='font-size:0.9rem;color:gray'>"
                    f"{code} · {market}{sector}</span>", unsafe_allow_html=True)
     with btn:
@@ -100,6 +102,26 @@ def reasons(code: str) -> None:
         col.markdown(f"<div style='border-left:4px solid {color};padding:4px 10px;font-size:0.9rem'>"
                      f"{describe(r.feature, r.value, r.pct, r.contrib)}</div>", unsafe_allow_html=True)
     st.write("")
+
+
+@st.fragment(run_every=10)
+def intraday(code: str) -> None:
+    """가장 최근 장의 1분봉 (realtime.bat 이 받은 값, 10초마다 갱신)."""
+    from common import _read
+    day = _read("SELECT MAX(substr(minute, 1, 10)) AS d FROM rt_bars WHERE code = ?", (code,))
+    if day.empty or not day["d"].iloc[0]:
+        return
+    d = day["d"].iloc[0]
+    b = _read("SELECT * FROM rt_bars WHERE code = ? AND minute LIKE ? ORDER BY minute", (code, f"{d}%"))
+    b["minute"] = pd.to_datetime(b["minute"])
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
+    fig.add_trace(go.Candlestick(x=b["minute"], open=b["o"], high=b["h"], low=b["l"], close=b["c"],
+                                 increasing_line_color=UP, decreasing_line_color=DOWN, name="1분봉"), 1, 1)
+    fig.add_trace(go.Bar(x=b["minute"], y=b["v"], marker_color="#adb5bd", name="거래량"), 2, 1)
+    fig.update_layout(height=360, xaxis_rangeslider_visible=False, showlegend=False,
+                      margin=dict(t=10, b=10))
+    st.markdown(f"**📡 {d} 장중 1분봉** · 마지막 {b['minute'].iloc[-1]:%H:%M} · 10초마다 갱신")
+    st.plotly_chart(fig, width="stretch")
 
 
 def chart(code: str) -> None:
@@ -176,6 +198,7 @@ def render(demo: bool) -> None:
                     "과거 시세·수급을 받아오고(약 5~10초), 예측도 계산합니다.")
         return
     reasons(code)
+    intraday(code)
     chart(code)
     ph = q("SELECT asof, prob FROM predictions WHERE code = ? AND horizon = ? ORDER BY asof", (code, H))
     if len(ph) > 1:

@@ -106,3 +106,16 @@ model:
 # ── 뉴스 감성 분석 ──
 sentiment:
   engine: lexicon           # lexicon = 내장 사전(가벼움) / finbert = KR-FinBERT (transformers, torch 설치 필요)
+
+# ── 카카오톡 알림 (kakao_setup.bat 으로 한 번 로그인 필요) ──
+alerts:
+  kakao: true               # false 면 알림을 보내지 않음
+  daily_summary: true       # update 끝나면 저녁 요약 1회
+  move_pct: 3.0             # 장중 관심종목이 전일 대비 ±이 값(%) 이상 움직이면 알림
+  cooldown_min: 60          # 같은 종목·같은 방향 알림은 이 시간(분)에 한 번만
+
+# ── 장중 실시간 시세 (realtime.bat) ──
+realtime:
+  max_stocks: 40            # 한국투자증권 실시간 구독 한도(41) 안에서
+  picks_top: 15             # 관심종목 외에 AI 추천 상위 몇 종목을 함께 볼지
+  poll_seconds: 30          # 실시간 연결이 안 될 때 대신 조회하는 주기(초)

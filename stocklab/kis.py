@@ -203,9 +203,21 @@ class KisClient:
         f = lambda k: pd.to_numeric(o.get(k), errors="coerce")  # noqa: E731
         return {
             "price": f("stck_prpr"), "change_pct": f("prdy_ctrt"),
+            "open": f("stck_oprc"), "high": f("stck_hgpr"), "low": f("stck_lwpr"),
+            "volume": f("acml_vol"), "value": f("acml_tr_pbmn"),
             "market_cap": f("hts_avls"),                    # 억원
             "per": f("per"), "pbr": f("pbr"), "eps": f("eps"), "bps": f("bps"),
             "high_52w": f("w52_hgpr"), "low_52w": f("w52_lwpr"),
             "foreign_pct": f("hts_frgn_ehrt"),              # 외국인 소진율(%)
             "sector": (o.get("bstp_kor_isnm") or "").strip(),
         }
+
+    def approval_key(self) -> str:
+        """실시간(WebSocket) 접속키. REST 토큰과 별개이며 appsecret 대신 'secretkey' 로 보낸다."""
+        r = self.http.post(f"{self.base}/oauth2/Approval", timeout=10, json={
+            "grant_type": "client_credentials", "appkey": self.app_key, "secretkey": self.app_secret})
+        data = r.json()
+        if not data.get("approval_key"):
+            raise KisError(str(data.get("error_code") or r.status_code),
+                           str(data.get("error_description") or data))
+        return data["approval_key"]

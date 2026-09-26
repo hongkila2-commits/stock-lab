@@ -4,7 +4,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from common import H, PROB_COL, S, TARGET_LABEL, listing, my_watchlist, q, show, stock_table
+from common import (H, PROB_COL, S, TARGET_LABEL, _color, goto, listing, my_watchlist, names, now_kst, q,
+                    rt_quotes, show, stock_table)
 from stocklab.collectors.listing import is_common
 from stocklab.picks import describe, is_macro
 
@@ -26,9 +27,47 @@ def reasons(asof: str, codes: list[str], k: int = 2) -> dict[str, dict]:
     return out
 
 
+@st.fragment(run_every=5)
+def live_card() -> None:
+    """장중 실시간 시세 (5초마다 자동 갱신). realtime.bat 이 받은 값."""
+    rt = rt_quotes()
+    if rt.empty:
+        return
+    mine = set(my_watchlist())
+    last = pd.to_datetime(rt["ts"]).max()
+    age = (now_kst() - last).total_seconds()
+    when = f"{last:%H:%M:%S}" if age < 90 else f"마지막 수신 {last:%m/%d %H:%M}"
+    th = float(S.alerts["move_pct"])
+    df = pd.DataFrame({
+        "code": rt.index, "종목": [("★ " if c in mine else "") + names().get(c, c) for c in rt.index],
+        "현재가": rt["price"].to_numpy(), "등락%": rt["change_pct"].to_numpy(),
+        "거래량": rt["volume"].to_numpy(), "시각": rt["ts"].str[11:19].to_numpy(),
+    })
+    df["_mine"] = df["code"].isin(mine)
+    df = df.sort_values(["_mine", "등락%"], ascending=[False, False]).drop(columns="_mine")
+    df = df.reset_index(drop=True)
+    with st.container(border=True):
+        st.markdown(f"**📡 실시간 시세** · {when} · 5초마다 갱신 · ★ 관심종목 · "
+                    f"±{th:g}% 이상이면 카카오톡 알림")
+        codes = df["code"].tolist()
+        view = df.drop(columns="code")
+        styled = (view.style.map(_color, subset=["등락%"])
+                  .map(lambda v: "font-weight:700" if abs(v) >= th else "", subset=["등락%"])
+                  .format({"현재가": "{:,.0f}", "등락%": "{:+.2f}", "거래량": "{:,.0f}"}, na_rep="-"))
+        nonce = st.session_state.get("live_nonce", 0)
+        ev = st.dataframe(styled, hide_index=True, width="stretch", on_select="rerun",
+                          selection_mode="single-row", key=f"t_live_{nonce}",
+                          height=min(38 + 35 * len(view), 318))
+        if ev and ev.selection.rows:
+            st.session_state["live_nonce"] = nonce + 1     # 돌아왔을 때 다시 이동하지 않도록
+            goto(codes[ev.selection.rows[0]])
+
+
 def render() -> None:
     st.header("관심종목")
-    st.caption("표의 행을 누르면 종목 상세로 이동합니다. 종목 추가는 왼쪽 **종목 검색**에서.")
+    st.caption("표의 행을 누르면 종목 상세로 이동합니다. 종목 추가는 왼쪽 **종목 검색**에서. "
+               "● = 장중 실시간 가격")
+    live_card()
 
     st.subheader("내 관심종목")
     mine = my_watchlist()

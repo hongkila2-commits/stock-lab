@@ -70,6 +70,22 @@ CREATE TABLE IF NOT EXISTS explain (
     asof TEXT, code TEXT, feature TEXT, value REAL, pct REAL, contrib REAL,
     PRIMARY KEY (asof, code, feature)
 );
+-- 업종 분류 (KIS 현재가 API 의 업종명). 30일마다 갱신
+CREATE TABLE IF NOT EXISTS sectors (code TEXT PRIMARY KEY, sector TEXT, updated TEXT);
+-- 보낸 알림 (같은 종목·같은 종류 반복 방지)
+CREATE TABLE IF NOT EXISTS alerts_sent (
+    code TEXT, kind TEXT, ts TEXT,
+    PRIMARY KEY (code, kind, ts)
+);
+-- 장중 실시간: 종목별 최신 체결 / 1분봉. ts·minute 는 한국시간 'YYYY-MM-DD HH:MM[:SS]'
+CREATE TABLE IF NOT EXISTS rt_quotes (
+    code TEXT PRIMARY KEY, ts TEXT, price REAL, change_pct REAL, open REAL, high REAL,
+    low REAL, volume REAL, value REAL
+);
+CREATE TABLE IF NOT EXISTS rt_bars (
+    code TEXT, minute TEXT, o REAL, h REAL, l REAL, c REAL, v REAL,
+    PRIMARY KEY (code, minute)
+);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 

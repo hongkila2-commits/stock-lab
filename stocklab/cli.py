@@ -5,13 +5,16 @@
   train    모델 재학습
   predict  최신 데이터로 예측만
   demo     가상 데이터로 데모 DB 생성 (키 없이 화면 확인용)
+  realtime 장중 실시간 시세 (realtime.bat)
+  kakao-login / kakao-test   카카오톡 알림 설정·시험
 """
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
-from datetime import date, datetime, timedelta
+import time
+from datetime import date, datetime, time as dtime, timedelta
 
 import pandas as pd
 
@@ -67,6 +70,8 @@ def cmd_check(args) -> int:
                   f"(약 {r['market_cap'] / 10000:,.0f}조 — 실제와 크게 다르면 알려주세요)")
     except Exception as e:
         print(f"[실패] 전체 종목 목록 (선택 기능 — 없으면 settings.yaml 의 종목만 분석): {e}")
+    from .kakao import Kakao
+    print(f"[{'OK' if (ROOT / 'data' / 'kakao_token.json').exists() else '미설정'}] 카카오톡 알림 (선택): {Kakao().status()}")
     for name, keys in {"공공데이터포털 시세": ["DATA_GO_KR_API_KEY"],"네이버 뉴스": ["NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"],
                        "DART 공시": ["DART_API_KEY"], "한국은행 ECOS": ["ECOS_API_KEY"]}.items():
         print(f"[{'OK' if all(env(k) for k in keys) else '미설정'}] {name} (선택)")
@@ -177,6 +182,8 @@ def cmd_update(args) -> int:
             market.update_prices(conn, kis, list(stocks), years)
             log.info("② 투자자 수급 수집")
             market.update_flows(conn, kis, list(stocks))
+            from .sectors import update_sectors
+            update_sectors(conn, kis, list(stocks))
         n_prices = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
         if n_prices == 0:
             log.error("주가 데이터가 0건입니다. 위의 '수집 실패' 메시지를 확인하세요.")
@@ -198,8 +205,75 @@ def cmd_update(args) -> int:
         log.info("⑥ 예측")
         _train_and_predict(conn, s, force_train=False)
         db.set_meta(conn, "last_update", datetime.now().isoformat(timespec="minutes"))
+
+        if s.alerts["daily_summary"]:
+            from . import alerts, kakao
+            text = alerts.daily_summary(conn, s)
+            if text:
+                log.info("⑦ 저녁 요약 알림\n%s", text)
+                kakao.notify(text, bool(s.alerts["kakao"]))
     log.info("완료")
     return 0
+
+
+def cmd_realtime(args) -> int:
+    from . import realtime
+    s = load_settings()
+    t = realtime.now_kst()
+    if not args.force and t.weekday() >= 5:
+        log.info("주말에는 실시간 시세를 실행하지 않습니다.")
+        return 0
+    if not args.force and t.time() >= realtime.STOP:
+        log.info("오늘 장이 끝났습니다 (15:30). 내일 장 시작 전에 다시 실행하세요.")
+        return 0
+    while not args.force and t.time() < realtime.OPEN:
+        log.info("장 시작(09:00) 전입니다. 기다리는 중… (지금 %s)", t.strftime("%H:%M"))
+        time.sleep(min(300, max(5, (datetime.combine(t.date(), realtime.OPEN) - t).seconds)))
+        t = realtime.now_kst()
+    try:
+        kis = _kis()
+        kis.token()
+    except Exception as e:
+        log.error("한국투자증권 연결 실패: %s — check.bat 으로 확인하세요.", e)
+        return 1
+    conn = db.connect()
+    try:
+        codes = realtime.targets(conn, s)
+        if not codes:
+            log.error("실시간으로 볼 종목이 없습니다. 관심종목을 추가하거나 update 를 먼저 실행하세요.")
+            return 1
+        log.info("실시간 시세 대상 %d종목 (관심종목 + AI 추천 상위)", len(codes))
+        runner = realtime.Runner(conn, kis, s, codes,
+                                 stop_at=realtime.STOP if not args.force else dtime(23, 59))
+        if args.poll:
+            runner.run_polling()
+        else:
+            runner.run()
+    finally:
+        conn.close()
+    log.info("실시간 종료")
+    return 0
+
+
+def cmd_kakao_login(args) -> int:
+    from . import kakao
+    try:
+        print(kakao.login())
+    except Exception as e:
+        print(f"[실패] {e}")
+        return 1
+    return cmd_kakao_test(args)
+
+
+def cmd_kakao_test(args) -> int:
+    from . import kakao
+    try:
+        n = kakao.Kakao().send("[StockLab] 카카오톡 알림 테스트입니다.\n이 메시지가 보이면 설정 완료!")
+        print(f"[OK] 테스트 메시지 {n}건 보냄 — 카카오톡 '나와의 채팅'을 확인하세요.")
+        return 0
+    except Exception as e:
+        print(f"[실패] {e}")
+        return 1
 
 
 def cmd_train(args) -> int:
@@ -256,5 +330,11 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("demo")
     d.add_argument("--if-empty", action="store_true", help="데모 데이터가 없을 때만 생성")
     d.set_defaults(fn=cmd_demo)
+    r = sub.add_parser("realtime", help="장중 실시간 시세")
+    r.add_argument("--poll", action="store_true", help="WebSocket 대신 REST 조회로")
+    r.add_argument("--force", action="store_true", help="장 시간이 아니어도 실행 (시험용)")
+    r.set_defaults(fn=cmd_realtime)
+    sub.add_parser("kakao-login").set_defaults(fn=cmd_kakao_login)
+    sub.add_parser("kakao-test").set_defaults(fn=cmd_kakao_test)
     args = p.parse_args(argv)
     return args.fn(args)

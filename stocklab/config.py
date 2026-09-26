@@ -31,6 +31,8 @@ class Settings:
     sentiment: dict = field(default_factory=dict)
     universe_auto: dict = field(default_factory=dict)
     picks: dict = field(default_factory=dict)
+    alerts: dict = field(default_factory=dict)
+    realtime: dict = field(default_factory=dict)
 
     @property
     def all_stocks(self) -> dict[str, str]:
@@ -51,6 +53,10 @@ def load_settings(path: Path | None = None) -> Settings:
         sentiment={"engine": "lexicon", **(raw.get("sentiment") or {})},
         universe_auto={"top_market_cap": 300, **(raw.get("universe_auto") or {})},
         picks={"count": 30, "min_value_eok": 10, **(raw.get("picks") or {})},
+        alerts={"kakao": True, "daily_summary": True, "move_pct": 3.0, "cooldown_min": 60,
+                **(raw.get("alerts") or {})},
+        realtime={"max_stocks": 40, "picks_top": 15, "poll_seconds": 30,
+                  **(raw.get("realtime") or {})},
     )
 
 

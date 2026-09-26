@@ -10,10 +10,14 @@ import streamlit as st
 st.set_page_config(page_title="StockLab", page_icon="📈", layout="wide")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, names, open_stock,  # noqa: E402
-                    prices, q, refresh, stats)
+from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, names, now_kst,  # noqa: E402
+                    open_stock, prices, q, refresh, rt_status, stats)
 from stocklab.config import db_path  # noqa: E402
-from views import detail, flows, macro, model, watch  # noqa: E402
+from views import detail, flows, macro, model, sectors, watch  # noqa: E402
+
+# 자동 갱신 영역(fragment)에서 누른 종목으로 이동 — 위젯을 그리기 전에 처리해야 한다
+if "goto" in st.session_state:
+    open_stock(st.session_state.pop("goto"))
 
 # 사이드바를 조금 넓혀 전체 종목 표(종목·현재가·등락)가 잘리지 않게
 st.markdown("<style>section[data-testid='stSidebar']{min-width:400px;}</style>", unsafe_allow_html=True)
@@ -88,6 +92,23 @@ def market_list() -> None:
                + (" (전 거래일 종가)" if li["source"].iloc[0] == "공공데이터포털" else ""))
 
 
+@st.fragment(run_every=10)
+def rt_badge() -> None:
+    """실시간 상태: realtime.bat 이 30초 안에 신호를 남겼으면 '연결됨'."""
+    m = rt_status()
+    hb = pd.to_datetime(m.get("rt_heartbeat"), errors="coerce")
+    alive = pd.notna(hb) and (now_kst() - hb).total_seconds() < 90
+    mode = m.get("rt_mode", "off")
+    if mode == "demo":
+        st.caption("📡 실시간: 데모 (가상 장중 데이터)")
+    elif alive and mode in ("websocket", "poll"):
+        how = "실시간 연결" if mode == "websocket" else f"{S.realtime['poll_seconds']}초 조회"
+        st.caption(f"🟢 {how} · {m.get('rt_count', '?')}종목 · {hb:%H:%M:%S}")
+    else:
+        last = f" (마지막 {hb:%m/%d %H:%M})" if pd.notna(hb) else ""
+        st.caption(f"⚪ 실시간 꺼짐{last} — 장중에 `realtime.bat` 실행")
+
+
 def empty_help() -> None:
     """데이터가 없을 때: 무엇을 읽고 있는지, 무엇이 비었는지, 최근 오류는 무엇인지 보여준다."""
     path = db_path()
@@ -121,6 +142,7 @@ with st.sidebar:
     if DEMO:
         st.warning("**데모 모드** — 가상 데이터입니다.")
     st.radio("메뉴", PAGES, key="page", label_visibility="collapsed")
+    rt_badge()
     st.divider()
 
     st.markdown("**종목 검색**")
@@ -152,6 +174,8 @@ if page == "관심종목":
     watch.render()
 elif page == "종목 상세":
     detail.render(DEMO)
+elif page == "업종 수급":
+    sectors.render()
 elif page == "외국인 수급":
     flows.render()
 elif page == "예측 모델":
