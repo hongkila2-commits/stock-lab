@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from common import (DOWN, H, S, TARGET_LABEL, UP, eok, flows, latest_pred, listing, metric,
+from common import (DOWN, H, PROB_TITLE, S, TARGET_LABEL, UP, eok, flows, latest_pred, listing, metric,
                     my_watchlist, names, prices, q, refresh, signal, stats)
 from stocklab.config import env
 from stocklab.picks import describe
@@ -67,9 +67,9 @@ def header(code: str, demo: bool) -> None:
     p = latest_pred().get(code, np.nan)
 
     m = st.columns(6)
-    metric(m[0], "현재가", _fmt(price, "{:,.0f}", "원"), chg)
+    metric(m[0], "현재가(원)", _fmt(price, "{:,.0f}"), chg)
     m[1].metric("시가총액", eok(cap))
-    m[2].metric(TARGET_LABEL.replace("코스피 대비 ", "코스피대비 "), _fmt(p, "{:.2f}"),
+    m[2].metric(PROB_TITLE, _fmt(p, "{:.2f}"),
                 signal(p) if pd.notna(p) else None, delta_color="off",
                 help=f"{H}거래일 뒤 {TARGET_LABEL}. 0.5 = 반반")
     if s is not None and pd.notna(s["pos52"]):
@@ -99,6 +99,7 @@ def reasons(code: str) -> None:
         color = UP if (r.contrib or 0) > 0 else DOWN if (r.contrib or 0) < 0 else "gray"
         col.markdown(f"<div style='border-left:4px solid {color};padding:4px 10px;font-size:0.9rem'>"
                      f"{describe(r.feature, r.value, r.pct, r.contrib)}</div>", unsafe_allow_html=True)
+    st.write("")
 
 
 def chart(code: str) -> None:
