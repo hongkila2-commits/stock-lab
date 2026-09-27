@@ -257,3 +257,22 @@ class Runner:
         if not self.done():
             self.run_polling()
         self._status("off")
+
+
+def snapshot(conn, kis, codes: list[str], clock=now_kst) -> int:
+    """지금 현재가를 한 번만 조회해 rt_quotes 에 저장 (대시보드 '💹 현재가 받기').
+    realtime.bat 이 꺼져 있어도 표·상세에 당일 가격이 보이게 한다. 알림·상태 표시는 건드리지 않는다."""
+    book, t = Book(), clock()
+    for c in codes:
+        try:
+            q = kis.quote(c)
+        except Exception as e:
+            log.warning("  %s 현재가 조회 실패: %s", c, e)
+            continue
+        if pd.isna(q.get("price")):
+            continue
+        book.add({"code": c, "hhmmss": t.strftime("%H%M%S"), "price": q["price"],
+                  "change_pct": q.get("change_pct"), "open": q.get("open"), "high": q.get("high"),
+                  "low": q.get("low"), "tick_vol": 0, "volume": q.get("volume"),
+                  "value": q.get("value")}, t.strftime("%Y-%m-%d"))
+    return len(book.flush(conn))

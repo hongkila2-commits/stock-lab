@@ -10,8 +10,8 @@ import streamlit as st
 st.set_page_config(page_title="StockLab", page_icon="📈", layout="wide")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, names, now_kst,  # noqa: E402
-                    open_stock, prices, q, refresh, rt_status, stats)
+from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, my_watchlist, names,  # noqa: E402
+                    now_kst, open_stock, prices, q, refresh, rt_alive, rt_status, stats)
 from stocklab.config import db_path  # noqa: E402
 from views import detail, flows, macro, model, sectors, watch  # noqa: E402
 import mobile  # noqa: E402
@@ -99,6 +99,33 @@ def market_list() -> None:
                + (" (전 거래일 종가)" if li["source"].iloc[0] == "공공데이터포털" else ""))
 
 
+def snapshot_button() -> None:
+    """realtime.bat 이 꺼져 있을 때 관심종목 현재가를 한 번 받아오기 (평일 09:00 이후, 편집 가능한 사용자만)."""
+    t = now_kst()
+    if DEMO or mobile.readonly() or rt_alive() or t.weekday() >= 5 or t.hour < 9:
+        return
+    codes = my_watchlist()[:20]
+    if not codes:
+        return
+    if st.button(f"💹 현재가 받기 ({len(codes)}종목)", width="stretch",
+                 help="실시간(realtime.bat)이 꺼져 있을 때, 내 관심종목의 지금 가격을 한국투자증권에서 한 번 받아옵니다"):
+        with st.spinner(f"관심종목 {len(codes)}개 현재가 조회 중… (약 {len(codes) * 0.6:.0f}초)"):
+            try:
+                from stocklab import db as _db
+                from stocklab.cli import _kis
+                from stocklab.realtime import snapshot
+                conn = _db.connect()
+                try:
+                    n = snapshot(conn, _kis(), codes)
+                finally:
+                    conn.close()
+                st.session_state["flash"] = f"{n}종목 현재가를 받았습니다 ({now_kst():%H:%M:%S})."
+            except Exception as e:
+                st.session_state["flash"] = f"현재가를 받지 못했습니다: {e}"
+        refresh()
+        st.rerun()
+
+
 @st.fragment(run_every=10)
 def rt_badge() -> None:
     """실시간 상태: realtime.bat 이 30초 안에 신호를 남겼으면 '연결됨'."""
@@ -168,10 +195,12 @@ with st.sidebar:
         mobile.phone_panel()
 
     c1, c2 = st.columns([1, 1])
-    if c1.button("새로고침", width="stretch"):
+    if c1.button("새로고침", width="stretch",
+                 help="저장된 값을 다시 읽습니다. 새 주가는 realtime.bat(장중 자동) 또는 💹 현재가 받기"):
         refresh()
         st.rerun()
     c2.caption(f"업데이트\n{META.get('last_update', '없음')}")
+    snapshot_button()
     st.caption(f"예측: {H}거래일 뒤 {TARGET_LABEL} · 강세 ≥ {S.model['bullish']:.2f} · "
                f"약세 ≤ {S.model['bearish']:.2f}\n\n⚠️ 참고용 통계 모델입니다. 투자 판단과 책임은 본인에게 있습니다.")
 

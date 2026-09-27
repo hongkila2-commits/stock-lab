@@ -159,3 +159,13 @@ def test_market_hours():
     assert realtime.market_open(datetime(2026, 9, 25, 9, 0))
     assert not realtime.market_open(datetime(2026, 9, 25, 15, 31))
     assert not realtime.market_open(datetime(2026, 9, 26, 10, 0))   # 토요일
+
+
+def test_snapshot_stores_quotes_without_alert_or_status(conn):
+    n = realtime.snapshot(conn, FakeKis(), ["005930", "000660"],
+                          clock=lambda: datetime(2026, 9, 25, 10, 15, 30))
+    assert n == 2
+    q = db.query(conn, "SELECT * FROM rt_quotes ORDER BY code")
+    assert q["price"].tolist() == [70000, 70000] and q["ts"].iloc[0] == "2026-09-25 10:15:30"
+    assert db.get_meta(conn, "rt_mode") is None                  # 실시간 상태는 그대로
+    assert conn.execute("SELECT COUNT(*) FROM alerts_sent").fetchone()[0] == 0

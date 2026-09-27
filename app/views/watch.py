@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from common import (H, PROB_COL, S, TARGET_LABEL, _color, compact, goto, listing, my_watchlist, names,
-                    now_kst, q, rt_quotes, show, stock_table)
+                    now_kst, price_basis, q, rt_quotes, show, stock_table)
 from stocklab.collectors.listing import is_common
 from stocklab.picks import describe, is_macro
 
@@ -73,6 +73,9 @@ def render() -> None:
 
     st.subheader("내 관심종목")
     mine = my_watchlist()
+    basis = price_basis(mine)
+    if basis:
+        st.caption(basis)
     show(stock_table(mine), key="t_mine")
     if not mine:
         st.caption("왼쪽 종목 검색에서 종목을 고른 뒤 ☆ 관심종목 추가를 누르세요.")

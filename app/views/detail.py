@@ -7,13 +7,13 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from common import (DOWN, H, PROB_TITLE, S, TARGET_LABEL, UP, compact, eok, flows, latest_pred, listing, metric,
+from common import (DOWN, H, PROB_TITLE, S, TARGET_LABEL, UP, compact, eok, flows, rt_fresh, latest_pred, listing, metric,
                     my_watchlist, names, prices, q, refresh, signal, stats)
 from stocklab.config import env
 from stocklab.picks import describe
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def kis_quote(code: str) -> dict | None:
     """KIS 현재가·재무. 키가 없거나 실패하면 None (화면에서 조용히 생략)."""
     if not env("KIS_APP_KEY"):
@@ -62,10 +62,18 @@ def header(code: str, demo: bool) -> None:
             refresh()
             st.rerun()
 
-    price = qt["price"] if qt and pd.notna(qt.get("price")) else (
-        s["close"] if s is not None else (l["close"] if l is not None else np.nan))
-    chg = qt["change_pct"] if qt and pd.notna(qt.get("change_pct")) else (
-        s["r1"] * 100 if s is not None else (l["change_pct"] if l is not None else np.nan))
+    # 현재가 우선순위: 실시간(2분 이내) → KIS 조회(60초 캐시) → 일봉 종가 → 전체 목록
+    rt = rt_fresh()
+    live = rt.loc[code] if code in rt.index else None
+    if live is not None:
+        price, chg = live["price"], live["change_pct"]
+    elif qt and pd.notna(qt.get("price")):
+        price, chg = qt["price"], qt.get("change_pct", np.nan)
+    elif s is not None:
+        price, chg = s["close"], s["r1"] * 100
+    else:
+        price = l["close"] if l is not None else np.nan
+        chg = l["change_pct"] if l is not None else np.nan
     cap = qt["market_cap"] if qt and pd.notna(qt.get("market_cap")) else (
         l["market_cap"] if l is not None else np.nan)
     p = latest_pred().get(code, np.nan)

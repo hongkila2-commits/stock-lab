@@ -142,6 +142,27 @@ def rt_fresh() -> pd.DataFrame:
     return r[age <= RT_FRESH_SEC]
 
 
+def rt_alive() -> bool:
+    """realtime.bat 이 90초 안에 신호를 남겼으면 실행 중."""
+    m = rt_status()
+    hb = pd.to_datetime(m.get("rt_heartbeat"), errors="coerce")
+    return m.get("rt_mode") in ("websocket", "poll") and pd.notna(hb) and \
+        (now_kst() - hb).total_seconds() < 90
+
+
+def price_basis(codes: list[str]) -> str:
+    """표의 '현재가'가 언제 값인지: '● 실시간 10:31:05 3종목 · 나머지 09-25 종가'."""
+    rt, st_ = rt_fresh(), stats()
+    live = [c for c in codes if c in rt.index]
+    parts = []
+    if live:
+        parts.append(f"● 실시간 {pd.to_datetime(rt.loc[live, 'ts']).max():%H:%M:%S} ({len(live)}종목)")
+    rest = [c for c in codes if c not in live and c in st_.index]
+    if rest:
+        parts.append(("나머지 " if live else "") + f"{st_.loc[rest, 'date'].max():%m-%d} 종가")
+    return "가격 기준: " + " · ".join(parts) if parts else ""
+
+
 def goto(code: str) -> None:
     """fragment 안에서 종목 상세로 이동: 다음 전체 실행 맨 앞에서 처리된다."""
     st.session_state["goto"] = code
