@@ -57,8 +57,10 @@ def test_daily_summary_mentions_signal_change(conn):
     db.upsert(conn, "predictions", pd.DataFrame([
         {"asof": "2026-10-02", "code": "A00000", "horizon": 5, "prob": 0.50, "model_id": "t"},
         {"asof": "2026-10-03", "code": "A00000", "horizon": 5, "prob": 0.60, "model_id": "t"}]))
-    db.upsert(conn, "picks", pd.DataFrame([{"asof": "2026-10-03", "code": "A00000", "rank": 1, "prob": 0.6}]))
+    db.upsert(conn, "picks", pd.DataFrame([
+        {"asof": "2026-10-03", "horizon": 5, "code": "A00000", "rank": 1, "prob": 0.6},
+        {"asof": "2026-10-03", "horizon": 20, "code": "A00000", "rank": 1, "prob": 0.66}]))
     text = alerts.daily_summary(conn, s)
-    assert "10/03" in text and "에이반도체 0.60" in text
+    assert "10/03" in text and "AI 1주: 에이반도체 0.60" in text and "AI 1개월: 에이반도체 0.66" in text
     assert "에이반도체 중립→강세" in text
     assert "반도체 +20억" in text

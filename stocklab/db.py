@@ -5,6 +5,7 @@ SQLite 를 쓰는 이유: 설치가 필요 없고, 대시보드가 읽는 동안
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -62,13 +63,13 @@ CREATE TABLE IF NOT EXISTS listing (
 CREATE TABLE IF NOT EXISTS user_watchlist (code TEXT PRIMARY KEY, added_at TEXT);
 -- 날짜별 추천 종목 (누적 → 실제 성적 추적)
 CREATE TABLE IF NOT EXISTS picks (
-    asof TEXT, code TEXT, rank INTEGER, prob REAL,
-    PRIMARY KEY (asof, code)
+    asof TEXT, horizon INTEGER, code TEXT, rank INTEGER, prob REAL,
+    PRIMARY KEY (asof, horizon, code)
 );
 -- 종목별 예측 근거. pct = 같은 날 전 종목 중 백분위(0~1), contrib = 확률을 올린(+)/내린(-) 정도
 CREATE TABLE IF NOT EXISTS explain (
-    asof TEXT, code TEXT, feature TEXT, value REAL, pct REAL, contrib REAL,
-    PRIMARY KEY (asof, code, feature)
+    asof TEXT, horizon INTEGER, code TEXT, feature TEXT, value REAL, pct REAL, contrib REAL,
+    PRIMARY KEY (asof, horizon, code, feature)
 );
 -- 업종 분류 (KIS 현재가 API 의 업종명). 30일마다 갱신
 CREATE TABLE IF NOT EXISTS sectors (code TEXT PRIMARY KEY, sector TEXT, updated TEXT);
@@ -95,8 +96,30 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    _migrate(conn)
     conn.executescript(SCHEMA)
     return conn
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """예전 DB 의 picks·explain 에 '예측 기간(horizon)' 칸이 없으면 추가한다.
+    기존 행은 그때까지 유일했던 5거래일 예측이므로 horizon=5 로 옮긴다 (추천 성적 기록 유지)."""
+    for table in ("picks", "explain"):
+        cols = _columns(conn, table)
+        if not cols or "horizon" in cols:
+            continue
+        old = f"{table}_old_v1"
+        create = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \(.*?\);", SCHEMA, re.S).group(0)
+        with conn:                            # 한 트랜잭션: 중간에 실패하면 원래대로
+            conn.execute(f"ALTER TABLE {table} RENAME TO {old}")
+            conn.execute(create)
+            keep = ", ".join(cols)
+            conn.execute(f"INSERT INTO {table} (horizon, {keep}) SELECT 5, {keep} FROM {old}")
+            conn.execute(f"DROP TABLE {old}")
 
 
 @contextmanager

@@ -71,7 +71,8 @@ def test_pick_performance(env):
     dates = [r[0] for r in conn.execute("SELECT DISTINCT date FROM prices ORDER BY date")]
     d = dates[-20]                                          # 5거래일 뒤 결과가 있는 날
     codes = [r[0] for r in conn.execute("SELECT DISTINCT code FROM prices")][:3]
-    db.upsert(conn, "picks", pd.DataFrame({"asof": d, "code": codes, "rank": [1, 2, 3], "prob": 0.6}))
+    db.upsert(conn, "picks", pd.DataFrame({"asof": d, "horizon": 5, "code": codes, "rank": [1, 2, 3],
+                                           "prob": 0.6}))
     db.upsert(conn, "predictions", pd.DataFrame({"asof": d, "code": codes, "horizon": 5,
                                                  "prob": 0.6, "model_id": "t"}))
     perf = picks.pick_performance(conn, 5, excess=False)
@@ -84,3 +85,17 @@ def test_pick_performance(env):
         exp.append(s.at[i + 5, "close"] / s.at[i, "close"] - 1)
     assert row["pick_ret"] == pytest.approx(sum(exp) / 3)
     assert row["n"] == 3
+
+
+def test_two_horizons_do_not_overwrite_each_other(env):
+    conn, _, _ = env
+    asof = conn.execute("SELECT MAX(asof) FROM predictions").fetchone()[0]
+    p5 = db.query(conn, "SELECT code, prob FROM predictions WHERE horizon = 5 AND asof = ?", (asof,))
+    db.upsert(conn, "predictions", pd.DataFrame({"asof": asof, "code": p5["code"], "horizon": 20,
+                                                 "prob": 1 - p5["prob"], "model_id": "t20"}))
+    a = picks.select_picks(conn, count=5, horizon=5)
+    b = picks.select_picks(conn, count=5, horizon=20)
+    stored = db.query(conn, "SELECT horizon, code FROM picks WHERE asof = ? ORDER BY horizon, rank", (asof,))
+    assert stored[stored["horizon"] == 5]["code"].tolist() == a["code"].tolist()
+    assert stored[stored["horizon"] == 20]["code"].tolist() == b["code"].tolist()
+    assert a["code"].tolist() != b["code"].tolist()        # 확률을 뒤집었으니 순위도 달라야 함

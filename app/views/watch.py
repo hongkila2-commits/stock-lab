@@ -4,14 +4,15 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from common import (H, PROB_COL, S, TARGET_LABEL, _color, compact, goto, listing, my_watchlist, names,
-                    now_kst, price_basis, q, rt_quotes, show, stock_table)
+from common import (H, HORIZONS, PROB_COL, S, TARGET_LABEL, _color, compact, goto, horizon_label, latest_pred,
+                    listing, my_watchlist, names, now_kst, price_basis, q, reliability, rt_quotes, show,
+                    stock_table)
 from stocklab.collectors.listing import is_common
 from stocklab.picks import describe, is_macro
 
 
-def reasons(asof: str, codes: list[str], k: int = 2) -> dict[str, dict]:
-    ex = q("SELECT * FROM explain WHERE asof = ?", (asof,))
+def reasons(asof: str, codes: list[str], k: int = 2, h: int = H) -> dict[str, dict]:
+    ex = q("SELECT * FROM explain WHERE asof = ? AND horizon = ?", (asof, int(h)))
     out = {}
     for c in codes:
         e = ex[ex["code"] == c]
@@ -76,7 +77,10 @@ def render() -> None:
     basis = price_basis(mine)
     if basis:
         st.caption(basis)
-    show(stock_table(mine), key="t_mine")
+    long = {c: {horizon_label(hz): latest_pred(hz).get(c) for hz in HORIZONS[1:]} for c in mine}
+    show(stock_table(mine, long), key="t_mine", colcfg={
+        horizon_label(hz): st.column_config.ProgressColumn(f"{horizon_label(hz)} 강세", format="%.2f",
+                                                           min_value=0, max_value=1) for hz in HORIZONS[1:]})
     if not mine:
         st.caption("왼쪽 종목 검색에서 종목을 고른 뒤 ☆ 관심종목 추가를 누르세요.")
 
@@ -92,19 +96,38 @@ def render() -> None:
         df.insert(1, "순위", range(1, len(df) + 1))
         show(df, key="t_cap", height=35 * 20 + 38)
 
-    st.subheader(f"AI 추천 — {H}거래일 {TARGET_LABEL} 상위 {S.picks['count']}")
-    picks = q("SELECT * FROM picks WHERE asof = (SELECT MAX(asof) FROM picks) ORDER BY rank")
-    if picks.empty:
+    st.subheader(f"AI 추천 — {TARGET_LABEL} 상위 {S.picks['count']}")
+    tabs = st.tabs([f"{horizon_label(h)} ({h}거래일)" for h in HORIZONS])
+    for tab, h in zip(tabs, HORIZONS):
+        with tab:
+            ai_picks(h)
+
+
+def ai_picks(h: int) -> None:
+    """기간 h 의 최신 추천. 전 추천일 대비 새로 들어온 종목에 🆕."""
+    dates = q("SELECT DISTINCT asof FROM picks WHERE horizon = ? ORDER BY asof DESC LIMIT 2", (int(h),))
+    if dates.empty:
         st.info("추천 결과가 없습니다. `update.bat` 을 실행하면 모델이 종목을 고릅니다.")
-    else:
-        asof = picks["asof"].iloc[0]
-        st.caption(f"기준일 {asof} · 분석 대상 중 보통주, 20일 평균 거래대금 {S.picks['min_value_eok']}억원 이상에서 선정 · "
-                   "▲ 확률을 올린 요인 ▼ 내린 요인 · 참고용 통계 모델이며 수익을 보장하지 않습니다.")
-        codes = picks["code"].tolist()
-        df = stock_table(codes, reasons(asof, codes))
-        df.insert(1, "순위", picks["rank"].to_numpy())
-        # 근거가 핵심이라 열을 줄이고 확률 바로 옆에 둔다
-        df = df[[c for c in ["code", "순위", "종목", PROB_COL, "주요 근거", "현재가", "등락%",
-                             "시가총액", "외국인5일(억)"] if c in df]]
-        show(df, key="t_picks", height=35 * min(len(df), 15) + 38,
-             colcfg={"주요 근거": st.column_config.TextColumn(width="large")})
+        return
+    asof = dates["asof"].iloc[0]
+    picks = q("SELECT * FROM picks WHERE horizon = ? AND asof = ? ORDER BY rank", (int(h), asof))
+    prev = set(q("SELECT code FROM picks WHERE horizon = ? AND asof = ?", (int(h), dates["asof"].iloc[1]))["code"]) \
+        if len(dates) > 1 else None
+    st.caption(f"기준일 {asof} · 매일 update 후 갱신 · {h}거래일(약 {horizon_label(h)}) 뒤 {TARGET_LABEL} 순 · "
+               f"보통주·20일 평균 거래대금 {S.picks['min_value_eok']}억원 이상 · ▲ 확률을 올린 요인 ▼ 내린 요인"
+               + (f" · 🆕 = {dates['asof'].iloc[1]} 추천에 없던 종목" if prev is not None else ""))
+    rel = reliability(h)
+    if rel:
+        st.caption(rel)
+    codes = picks["code"].tolist()
+    df = stock_table(codes, reasons(asof, codes, h=h), h=h)
+    if prev is not None:
+        df["종목"] = [("🆕 " if c not in prev else "") + n for c, n in zip(df["code"], df["종목"])]
+    df.insert(1, "순위", picks["rank"].to_numpy())
+    # 근거가 핵심이라 열을 줄이고 확률 바로 옆에 둔다
+    df = df[[c for c in ["code", "순위", "종목", PROB_COL, "주요 근거", "현재가", "등락%",
+                         "시가총액", "외국인5일(억)"] if c in df]]
+    show(df, key=f"t_picks_{h}", height=35 * min(len(df), 15) + 38, colcfg={
+        "주요 근거": st.column_config.TextColumn(width="large"),
+        PROB_COL: st.column_config.ProgressColumn(f"{horizon_label(h)} 강세", format="%.2f",
+                                                  min_value=0, max_value=1)})

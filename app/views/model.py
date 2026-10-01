@@ -7,14 +7,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import DOWN, H, S, TARGET_LABEL, UP
+from common import DOWN, H as H0, HORIZONS, S, TARGET_LABEL, UP, horizon_label
 from stocklab import db
 from stocklab.config import db_path, model_dir
 from stocklab.picks import label as feat_label, pick_performance
 
 
 @st.cache_data(ttl=300)
-def performance() -> pd.DataFrame:
+def performance(H: int = H0) -> pd.DataFrame:
     if not db_path().exists():
         return pd.DataFrame()
     conn = db.connect()
@@ -24,9 +24,9 @@ def performance() -> pd.DataFrame:
         conn.close()
 
 
-def tracking() -> None:
+def tracking(H: int = H0) -> None:
     st.subheader(f"추천 {S.picks['count']}종목 실제 성적")
-    perf = performance()
+    perf = performance(H)
     what = "코스피 대비 초과수익" if S.model["target"] == "excess" else "수익률"
     if perf.empty:
         st.info(f"추천 기록이 쌓이고 {H}거래일이 지나면 여기에 실제 성적이 표시됩니다. "
@@ -52,6 +52,10 @@ def tracking() -> None:
 
 def render() -> None:
     st.header("예측 모델")
+    H = H0
+    if len(HORIZONS) > 1:
+        H = st.segmented_control("예측 기간", HORIZONS, default=HORIZONS[0], key="model_h",
+                                 format_func=lambda x: f"{horizon_label(x)} ({x}거래일)") or HORIZONS[0]
     path = model_dir() / f"model_h{H}.json"
     if not path.exists():
         st.info("학습된 모델이 없습니다. `train.bat` 또는 `update.bat` 을 실행하세요.")
@@ -61,7 +65,7 @@ def render() -> None:
     engine = "LightGBM" if mm.get("engine", "lightgbm") == "lightgbm" else "scikit-learn"
     st.caption(f"모델 {mm['model_id']} ({engine}) · {mm['horizon']}거래일 뒤 {TARGET_LABEL} · "
                f"학습 {mm['data_from']} ~ {mm['data_to']} · {mm['n_codes']}종목 · {mm['n_rows']:,}행")
-    tracking()
+    tracking(H)
 
     st.subheader("과거 데이터 검증 (시간 순서대로)")
     if cm:

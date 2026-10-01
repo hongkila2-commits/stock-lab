@@ -23,7 +23,7 @@ def my_codes(conn, s) -> list[str]:
 
 def daily_summary(conn, s) -> str | None:
     """update 끝에 보내는 요약. 예측이 없으면 None."""
-    h = int(s.model["horizon"])
+    h = s.horizons[0]
     pred = db.query(conn, "SELECT asof, code, prob FROM predictions WHERE horizon = ?", (h,))
     if pred.empty:
         return None
@@ -32,10 +32,14 @@ def daily_summary(conn, s) -> str | None:
     latest, prev = dates[-1], (dates[-2] if len(dates) > 1 else None)
     lines = [f"[StockLab] {latest[5:].replace('-', '/')} 요약"]
 
-    picks = db.query(conn, "SELECT code, prob FROM picks WHERE asof = ? ORDER BY rank LIMIT 5", (latest,))
-    if len(picks):
-        lines.append("AI 추천: " + ", ".join(f"{names.get(c, c)} {p:.2f}"
-                                             for c, p in zip(picks["code"], picks["prob"])))
+    from .config import horizon_label
+    for hz in s.horizons:                        # 기간별 추천 상위 5 (1주, 1개월 …)
+        picks = db.query(conn, "SELECT code, prob FROM picks WHERE horizon = ? AND asof = "
+                               "(SELECT MAX(asof) FROM picks WHERE horizon = ?) ORDER BY rank LIMIT 5",
+                         (hz, hz))
+        if len(picks):
+            lines.append(f"AI {horizon_label(hz)}: " + ", ".join(
+                f"{names.get(c, c)} {p:.2f}" for c, p in zip(picks["code"], picks["prob"])))
 
     mine = my_codes(conn, s)
     now = pred[pred["asof"] == latest].set_index("code")["prob"]

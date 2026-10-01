@@ -40,6 +40,16 @@ class Settings:
     def all_stocks(self) -> dict[str, str]:
         return {**self.universe, **self.watchlist}
 
+    @property
+    def horizons(self) -> list[int]:
+        """예측 기간들(거래일). 첫 번째가 기본(실시간 대상·신호 변화 알림 기준)."""
+        hs = self.model.get("horizons") or [self.model["horizon"]]
+        return list(dict.fromkeys(int(h) for h in hs))
+
+
+def horizon_label(h: int) -> str:
+    return {5: "1주", 10: "2주", 20: "1개월", 60: "3개월"}.get(int(h), f"{h}거래일")
+
 
 def load_settings(path: Path | None = None) -> Settings:
     path = path or ROOT / "config" / "settings.yaml"
@@ -50,7 +60,7 @@ def load_settings(path: Path | None = None) -> Settings:
         collect={"history_years": 3, "news_per_stock": 100, "dart_lookback_days": 365,
                  **(raw.get("collect") or {})},
         screener={"auto_add_top": 10, **(raw.get("screener") or {})},
-        model={"horizon": 5, "target": "excess", "bullish": 0.55, "bearish": 0.45,
+        model={"horizon": 5, "horizons": [5, 20], "target": "excess", "bullish": 0.55, "bearish": 0.45,
                "retrain_every_days": 7, **(raw.get("model") or {})},
         sentiment={"engine": "lexicon", **(raw.get("sentiment") or {})},
         universe_auto={"top_market_cap": 300, **(raw.get("universe_auto") or {})},

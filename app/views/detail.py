@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from common import (DOWN, H, PROB_TITLE, S, TARGET_LABEL, UP, compact, eok, flows, rt_fresh, latest_pred, listing, metric,
+from common import (DOWN, H, HORIZONS, PROB_TITLE, S, TARGET_LABEL, UP, horizon_label, compact, eok, flows, rt_fresh, latest_pred, listing, metric,
                     my_watchlist, names, prices, q, refresh, signal, stats)
 from stocklab.config import env
 from stocklab.picks import describe
@@ -77,44 +77,48 @@ def header(code: str, demo: bool) -> None:
     cap = qt["market_cap"] if qt and pd.notna(qt.get("market_cap")) else (
         l["market_cap"] if l is not None else np.nan)
     p = latest_pred().get(code, np.nan)
+    probs = {h: latest_pred(h).get(code, np.nan) for h in HORIZONS}    # 1주·1개월 …
 
     if compact():
-        _compact_cards(price, chg, cap, p, s, qt)
+        _compact_cards(price, chg, cap, probs, s, qt)
         return
-    m = st.columns(6)
-    metric(m[0], "현재가(원)", _fmt(price, "{:,.0f}"), chg)
-    m[1].metric("시가총액", eok(cap))
-    m[2].metric(PROB_TITLE, _fmt(p, "{:.2f}"),
-                signal(p) if pd.notna(p) else None, delta_color="off",
-                help=f"{H}거래일 뒤 {TARGET_LABEL}. 0.5 = 반반")
+    m = iter(st.columns(5 + len(HORIZONS)))
+    metric(next(m), "현재가(원)", _fmt(price, "{:,.0f}"), chg)
+    next(m).metric("시가총액", eok(cap))
+    for h, ph in probs.items():                      # 기간별 강세 확률 (1주, 1개월 …)
+        next(m).metric(f"{horizon_label(h)} 강세", _fmt(ph, "{:.2f}"),
+                       signal(ph) if pd.notna(ph) else None, delta_color="off",
+                       help=f"{h}거래일 뒤 {TARGET_LABEL}. 0.5 = 반반")
+    c52, cfr, clast = next(m), next(m), next(m)
     if s is not None and pd.notna(s["pos52"]):
-        m[3].metric("52주 위치", f"{s['pos52'] * 100:.0f}%",
-                    help=f"최저 {s['lo']:,.0f} ~ 최고 {s['hi']:,.0f} 사이 어디쯤인지 (0% 최저, 100% 최고)")
+        c52.metric("52주 위치", f"{s['pos52'] * 100:.0f}%",
+                   help=f"최저 {s['lo']:,.0f} ~ 최고 {s['hi']:,.0f} 사이 어디쯤인지 (0% 최저, 100% 최고)")
     if s is not None and pd.notna(s.get("frgn_amt", np.nan)):
-        m[4].metric("외국인 5일", f"{s['frgn_amt']:+,.1f}억")
+        cfr.metric("외국인 5일", f"{s['frgn_amt']:+,.0f}억")
     if qt:
-        m[5].metric("PER · PBR", f"{_fmt(qt['per'], '{:.1f}')} · {_fmt(qt['pbr'], '{:.2f}')}",
-                    help=f"외국인 소진율 {_fmt(qt['foreign_pct'], '{:.1f}', '%')}")
+        clast.metric("PER · PBR", f"{_fmt(qt['per'], '{:.1f}')} · {_fmt(qt['pbr'], '{:.2f}')}",
+                     help=f"외국인 소진율 {_fmt(qt['foreign_pct'], '{:.1f}', '%')}")
     elif s is not None and pd.notna(s.get("orgn_amt", np.nan)):
-        m[5].metric("기관 5일", f"{s['orgn_amt']:+,.1f}억")
+        clast.metric("기관 5일", f"{s['orgn_amt']:+,.0f}억")
 
 
-def _compact_cards(price, chg, cap, p, s, qt) -> None:
+def _compact_cards(price, chg, cap, probs, s, qt) -> None:
     """휴대폰: 요약 지표를 3칸 격자 한 덩어리로 (Streamlit 열은 좁은 화면에서 세로로 쌓여 길어짐)."""
     def color(v):
         return UP if v > 0 else DOWN if v < 0 else "inherit"
     cards = [("현재가", _fmt(price, "{:,.0f}"),
               "" if pd.isna(chg) else f"<span style='color:{color(chg)}'>{chg:+.2f}%</span>"),
-             ("시가총액", eok(cap), ""),
-             (PROB_TITLE, _fmt(p, "{:.2f}"), signal(p) if pd.notna(p) else "")]
+             ("시가총액", eok(cap), "")]
+    cards += [(f"{horizon_label(h)} 강세", _fmt(ph, "{:.2f}"), signal(ph) if pd.notna(ph) else "")
+              for h, ph in probs.items()]
     if s is not None:
         cards.append(("52주 위치", "-" if pd.isna(s["pos52"]) else f"{s['pos52'] * 100:.0f}%", ""))
-        for col, lab in (("frgn_amt", "외국인 5일"), ("orgn_amt", "기관 5일")):
+        for col, lab in (("frgn_amt", "외국인 5일"), ("orgn_amt", "기관 5일"))[: 6 - len(cards)]:
             v = s.get(col, np.nan)
             cards.append((lab, "-" if pd.isna(v) else
                           f"<span style='color:{color(v)}'>{v:+,.1f}억</span>", ""))
-    if qt:
-        cards[-1] = ("PER·PBR", f"{_fmt(qt['per'], '{:.1f}')}·{_fmt(qt['pbr'], '{:.1f}')}", "")
+    if qt and len(cards) < 6:
+        cards.append(("PER·PBR", f"{_fmt(qt['per'], '{:.1f}')}·{_fmt(qt['pbr'], '{:.1f}')}", ""))
     cells = "".join(
         f"<div style='padding:6px 4px'><div style='font-size:0.75rem;color:gray'>{k}</div>"
         f"<div style='font-size:1.15rem;font-weight:600'>{v}</div>"
@@ -124,8 +128,16 @@ def _compact_cards(price, chg, cap, p, s, qt) -> None:
 
 
 def reasons(code: str) -> None:
-    ex = q("SELECT * FROM explain WHERE code = ? AND asof = (SELECT MAX(asof) FROM explain WHERE code = ?)",
-           (code, code))
+    have = q("SELECT DISTINCT horizon FROM explain WHERE code = ?", (code,))
+    hs = [h for h in HORIZONS if h in set(have["horizon"])] if not have.empty else []
+    if not hs:
+        return
+    h = hs[0]
+    if len(hs) > 1:
+        h = st.segmented_control("예측 기간", hs, default=hs[0], key="reason_h",
+                                 format_func=lambda x: f"{horizon_label(x)} 예측의 근거") or hs[0]
+    ex = q("SELECT * FROM explain WHERE code = ? AND horizon = ? AND asof = "
+           "(SELECT MAX(asof) FROM explain WHERE code = ? AND horizon = ?)", (code, int(h), code, int(h)))
     if ex.empty:
         return
     has_contrib = ex["contrib"].notna().any()
@@ -237,8 +249,10 @@ def render(demo: bool) -> None:
     reasons(code)
     intraday(code)
     chart(code)
-    ph = q("SELECT asof, prob FROM predictions WHERE code = ? AND horizon = ? ORDER BY asof", (code, H))
-    if len(ph) > 1:
+    ph = q("SELECT asof, horizon, prob FROM predictions WHERE code = ? ORDER BY asof", (code,))
+    if ph["asof"].nunique() > 1:
         st.markdown(f"**{TARGET_LABEL} 추이**")
-        st.line_chart(ph.set_index("asof")["prob"], height=180)
+        wide = ph.pivot(index="asof", columns="horizon", values="prob")
+        wide.columns = [f"{horizon_label(h)}" for h in wide.columns]
+        st.line_chart(wide, height=180)
     news_and_disclosures(code)

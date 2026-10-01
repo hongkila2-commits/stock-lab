@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, my_watchlist, names,  # noqa: E402
                     now_kst, open_stock, prices, q, refresh, rt_alive, rt_status, stats)
-from stocklab.config import db_path  # noqa: E402
+from stocklab.config import db_path, horizon_label  # noqa: E402
 from views import detail, flows, macro, model, sectors, watch  # noqa: E402
 import mobile  # noqa: E402
 from stocklab import netinfo  # noqa: E402
@@ -201,7 +201,8 @@ with st.sidebar:
         st.rerun()
     c2.caption(f"업데이트\n{META.get('last_update', '없음')}")
     snapshot_button()
-    st.caption(f"예측: {H}거래일 뒤 {TARGET_LABEL} · 강세 ≥ {S.model['bullish']:.2f} · "
+    st.caption(f"예측: {'·'.join(horizon_label(h) for h in S.horizons)} 뒤 {TARGET_LABEL} · "
+               f"강세 ≥ {S.model['bullish']:.2f} · "
                f"약세 ≤ {S.model['bearish']:.2f}\n\n⚠️ 참고용 통계 모델입니다. 투자 판단과 책임은 본인에게 있습니다.")
 
 # ── 본문 ────────────────────────────────────────────────

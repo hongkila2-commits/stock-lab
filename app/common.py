@@ -11,13 +11,14 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from stocklab import db  # noqa: E402
-from stocklab.config import db_path, load_settings  # noqa: E402
+from stocklab.config import db_path, horizon_label, load_settings  # noqa: E402
 
 UP, DOWN = "#d6336c", "#1c7ed6"   # 한국 관례: 상승 빨강, 하락 파랑
 PAGES = ["관심종목", "종목 상세", "업종 수급", "외국인 수급", "예측 모델", "거시지표"]
 RT_FRESH_SEC = 120        # 실시간 값이 이 시간 안이면 표의 현재가를 실시간 값으로
 S = load_settings()
-H = int(S.model["horizon"])
+HORIZONS = S.horizons                 # 예: [5, 20]
+H = HORIZONS[0]                       # 기본(1주)
 TARGET_LABEL = "코스피 대비 강세 확률" if S.model["target"] == "excess" else "상승 확률"
 PROB_COL = "강세확률"
 PROB_TITLE = "강세 확률" if S.model["target"] == "excess" else "상승 확률"
@@ -88,8 +89,8 @@ def names() -> dict[str, str]:
 
 
 @st.cache_data(ttl=300)
-def latest_pred() -> pd.Series:
-    pred = q("SELECT asof, code, prob FROM predictions WHERE horizon = ?", (H,))
+def latest_pred(h: int = H) -> pd.Series:
+    pred = q("SELECT asof, code, prob FROM predictions WHERE horizon = ?", (int(h),))
     if pred.empty:
         return pd.Series(dtype=float)
     return pred.sort_values("asof").groupby("code").tail(1).set_index("code")["prob"]
@@ -195,9 +196,9 @@ def eok(x) -> str:
 
 
 # ── 표 ─────────────────────────────────────────────────
-def stock_table(codes: list[str], extra: dict[str, dict] | None = None) -> pd.DataFrame:
+def stock_table(codes: list[str], extra: dict[str, dict] | None = None, h: int = H) -> pd.DataFrame:
     """공통 종목 표. 시세 이력이 있으면 그 값(당일), 없으면 전체 목록 값."""
-    st_, li, pr, rt = stats(), listing(), latest_pred(), rt_fresh()
+    st_, li, pr, rt = stats(), listing(), latest_pred(h), rt_fresh()
     rows = []
     for c in codes:
         has = c in st_.index
@@ -300,3 +301,26 @@ def open_stock(code: str) -> None:
     """콜백 안에서 호출: 종목 상세 페이지로 이동."""
     st.session_state["code"] = code
     st.session_state["page"] = "종목 상세"
+
+
+@st.cache_data(ttl=300)
+def model_meta(h: int) -> dict | None:
+    """학습된 모델의 검증 결과 (models/model_h{h}.json)."""
+    import json
+    from stocklab.config import model_dir
+    p = model_dir() / f"model_h{h}.json"
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+
+def reliability(h: int) -> str:
+    """'과거 검증: AUC 0.53 · 5개 구간 중 4개에서 상위 추천 > 하위' (+ 약하면 경고)."""
+    m = model_meta(h)
+    if not m or not m.get("cv"):
+        return ""
+    cv = m["cv"]
+    good = sum(1 for c in cv if c["top20_ret"] > c["bottom20_ret"])
+    auc = m["cv_mean"]["auc"]
+    text = f"과거 검증: AUC {auc:.3f} · {len(cv)}개 기간 중 {good}개에서 상위 추천이 하위보다 좋았음"
+    if auc < 0.53 or good < len(cv) - 1:
+        text += " · ⚠️ 예측력이 약한 편이라 참고만 하세요"
+    return text

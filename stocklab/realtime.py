@@ -121,9 +121,10 @@ class Book:
 def targets(conn, s) -> list[str]:
     """구독 대상: 내 관심종목 + AI 추천 상위 (최대 max_stocks)."""
     mine = alerts.my_codes(conn, s)
+    h = s.horizons[0]                      # 장중에 볼 추천은 짧은 기간(1주) 기준
     picks = [r[0] for r in conn.execute(
-        "SELECT code FROM picks WHERE asof = (SELECT MAX(asof) FROM picks) ORDER BY rank LIMIT ?",
-        (int(s.realtime["picks_top"]),))]
+        "SELECT code FROM picks WHERE horizon = ? AND asof = (SELECT MAX(asof) FROM picks WHERE horizon = ?) "
+        "ORDER BY rank LIMIT ?", (h, h, int(s.realtime["picks_top"])))]
     return list(dict.fromkeys(mine + picks))[: int(s.realtime["max_stocks"])]
 
 

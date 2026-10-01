@@ -19,7 +19,7 @@ from datetime import date, datetime, time as dtime, timedelta
 import pandas as pd
 
 from . import db, features, model, picks, screener
-from .config import LOG_DIR, ROOT, env, load_settings, sync_env
+from .config import LOG_DIR, ROOT, env, horizon_label, load_settings, sync_env
 
 log = logging.getLogger("stocklab")
 
@@ -92,7 +92,14 @@ def cmd_check(args) -> int:
 
 
 def _train_and_predict(conn, s, force_train: bool, allow_train: bool = True) -> None:
-    h, target = int(s.model["horizon"]), s.model["target"]
+    """설정의 예측 기간마다(기본 5·20거래일) 학습(필요 시)·예측·추천·근거 저장."""
+    for h in s.horizons:
+        log.info("── %s(%d거래일) 예측", horizon_label(h), h)
+        _train_and_predict_one(conn, s, h, force_train, allow_train)
+
+
+def _train_and_predict_one(conn, s, h: int, force_train: bool, allow_train: bool) -> None:
+    target = s.model["target"]
     codes = [r[0] for r in conn.execute("SELECT DISTINCT code FROM prices")]
     panel = features.build_panel(conn, codes, h, target)
     bundle = model.load(h)
@@ -126,7 +133,7 @@ def _train_and_predict(conn, s, force_train: bool, allow_train: bool = True) -> 
 
     top = picks.select_picks(conn, int(s.picks["count"]), float(s.picks["min_value_eok"]), h)
     log.info("추천 %d종목 선정 (거래대금 %s억 이상·보통주)", len(top), s.picks["min_value_eok"])
-    picks.save_explanations(conn, picks.explanations(panel, bundle))
+    picks.save_explanations(conn, picks.explanations(panel, bundle, horizon=h))
 
 
 def analysis_targets(conn, s) -> dict[str, str]:
@@ -301,7 +308,7 @@ def cmd_train(args) -> int:
 def cmd_predict(args) -> int:
     s = load_settings()
     with db.session() as conn:
-        bundle = model.load(int(s.model["horizon"]))
+        bundle = model.load(s.horizons[0])
         if not bundle:
             log.error("학습된 모델이 없습니다. 먼저 train 을 실행하세요.")
             return 1

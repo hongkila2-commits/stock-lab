@@ -94,16 +94,17 @@ def select_picks(conn, count: int = 30, min_value_eok: float = 10, horizon: int 
     pred = pred[pred["code"].map(ok).fillna(False).astype(bool)]
     top = pred.sort_values("prob", ascending=False).head(count).reset_index(drop=True)
     top["rank"] = np.arange(1, len(top) + 1)
-    out = top[["asof", "code", "rank", "prob"]]
+    top["horizon"] = horizon
+    out = top[["asof", "horizon", "code", "rank", "prob"]]
     if len(out):
-        conn.execute("DELETE FROM picks WHERE asof = ?", (out["asof"].iloc[0],))
+        conn.execute("DELETE FROM picks WHERE asof = ? AND horizon = ?", (out["asof"].iloc[0], horizon))
         db.upsert(conn, "picks", out)
     conn.commit()
     return out
 
 
 # ── 예측 근거 ───────────────────────────────────────────
-def explanations(panel: pd.DataFrame, bundle: dict, top_k: int = 5) -> pd.DataFrame:
+def explanations(panel: pd.DataFrame, bundle: dict, top_k: int = 5, horizon: int | None = None) -> pd.DataFrame:
     """최신일 종목별 근거 top_k. LightGBM 이면 SHAP 기여도, 아니면 중요 특징 중 두드러진 것."""
     feats = bundle["meta"]["features"]
     day = panel["date"].max()
@@ -130,7 +131,8 @@ def explanations(panel: pd.DataFrame, bundle: dict, top_k: int = 5) -> pd.DataFr
             ext = ext[[not is_macro(f) for f in ext.index]]
             order = ext.sort_values(ascending=False).index
         for f in [f for f in order if pd.notna(X.at[i, f])][:top_k]:
-            rows.append({"asof": day.strftime("%Y-%m-%d"), "code": code, "feature": f,
+            rows.append({"asof": day.strftime("%Y-%m-%d"),
+                         "horizon": int(horizon or bundle["meta"].get("horizon", 5)), "code": code, "feature": f,
                          "value": float(X.at[i, f]), "pct": float(pct.at[i, f]),
                          "contrib": None if contrib is None else float(contrib.at[i, f])})
     return pd.DataFrame(rows)
@@ -139,7 +141,8 @@ def explanations(panel: pd.DataFrame, bundle: dict, top_k: int = 5) -> pd.DataFr
 def save_explanations(conn, df: pd.DataFrame) -> None:
     if df.empty:
         return
-    conn.execute("DELETE FROM explain WHERE asof = ?", (df["asof"].iloc[0],))
+    conn.execute("DELETE FROM explain WHERE asof = ? AND horizon = ?",
+                 (df["asof"].iloc[0], int(df["horizon"].iloc[0])))
     db.upsert(conn, "explain", df)
     conn.commit()
 
@@ -147,7 +150,7 @@ def save_explanations(conn, df: pd.DataFrame) -> None:
 # ── 추천 성적 ───────────────────────────────────────────
 def pick_performance(conn, horizon: int = 5, excess: bool = True) -> pd.DataFrame:
     """날짜별: 추천 종목 평균 수익률 vs 그날 예측한 전체 종목 평균 (horizon 거래일 뒤, 실현된 것만)."""
-    picks = db.query(conn, "SELECT asof, code FROM picks")
+    picks = db.query(conn, "SELECT asof, code FROM picks WHERE horizon = ?", (horizon,))
     if picks.empty:
         return pd.DataFrame()
     pr = db.query(conn, "SELECT code, date, close FROM prices").sort_values(["code", "date"])
