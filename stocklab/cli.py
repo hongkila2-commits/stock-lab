@@ -180,6 +180,7 @@ def remove_stock(code: str) -> None:
 def cmd_update(args) -> int:
     from .collectors import dart, listing, macro, market, news
     s = load_settings()
+    failed: list[str] = []
     added = sync_env()
     if added:
         log.info(".env 에 새 설정 항목 추가: %s (값은 비어 있음)", ", ".join(added))
@@ -202,11 +203,15 @@ def cmd_update(args) -> int:
                 log.error("→ .env 의 KIS_APP_KEY / KIS_APP_SECRET / KIS_ENV 를 확인하고 check.bat 을 실행하세요.")
                 return 1
             log.info("① 주가 수집 (%d종목) — 처음 받는 종목은 종목당 약 5초 걸립니다", len(stocks))
-            market.update_prices(conn, kis, list(stocks), years)
-            log.info("② 투자자 수급 수집")
-            market.update_flows(conn, kis, list(stocks))
-            from .sectors import update_sectors
-            update_sectors(conn, kis, list(stocks))
+            res = market.update_prices(conn, kis, list(stocks), years)
+            failed = list(res["failed"])
+            if res["stopped"]:
+                log.warning("  서버 응답이 없어 수급·업종 수집은 건너뜁니다 (저장된 데이터로 예측은 계속).")
+            else:
+                log.info("② 투자자 수급 수집")
+                failed += market.update_flows(conn, kis, list(stocks))["failed"]
+                from .sectors import update_sectors
+                update_sectors(conn, kis, list(stocks))
         n_prices = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
         if n_prices == 0:
             log.error("주가 데이터가 0건입니다. 위의 '수집 실패' 메시지를 확인하세요.")
@@ -235,7 +240,11 @@ def cmd_update(args) -> int:
             if text:
                 log.info("⑦ 저녁 요약 알림\n%s", text)
                 kakao.notify(text, bool(s.alerts["kakao"]))
-    log.info("완료")
+    if not args.skip_market and failed:
+        log.warning("완료 — 단, %d건은 받지 못했습니다(서버 응답 지연 등). 다음 update.bat 때 자동으로 다시 시도합니다.",
+                    len(set(failed)))
+    else:
+        log.info("완료")
     return 0
 
 

@@ -100,3 +100,88 @@ def test_error_is_raised_with_code(tmp_path):
 def test_missing_keys_give_clear_message():
     with pytest.raises(ValueError, match="KIS_APP_KEY"):
         KisClient("", "", "paper")
+
+
+# ── 서버 응답 지연 (사용자 PC 에서 실제로 난 ReadTimeout) ──────────────────────
+import requests  # noqa: E402
+
+from stocklab import db  # noqa: E402
+from stocklab.collectors import market  # noqa: E402
+
+
+class Flaky(FakeKis):
+    """처음 n 번의 GET 은 ReadTimeout (모의투자 서버가 응답을 늦게 주는 상황)."""
+
+    def __init__(self, days, fail_times):
+        super().__init__(days)
+        self.fail_times = fail_times
+
+    def get(self, url, headers, params, timeout):
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=10)")
+        return super().get(url, headers, params, timeout)
+
+
+def slow_client(tmp_path, fake, waits):
+    return KisClient("key", "secret", "paper", token_path=tmp_path / "t.json",
+                     session=fake, min_interval=0, sleep=waits.append)
+
+
+def test_read_timeout_is_retried_then_succeeds(tmp_path):
+    waits = []
+    fake = Flaky(bdays(date(2026, 9, 25), 5), fail_times=2)
+    df = slow_client(tmp_path, fake, waits).daily_prices("005930", date(2026, 9, 1), date(2026, 9, 25))
+    assert len(df) == 5 and waits == [2, 5]
+
+
+def test_persistent_timeout_becomes_kis_error(tmp_path):
+    waits = []
+    with pytest.raises(KisError, match="NETWORK"):
+        slow_client(tmp_path, Flaky([], fail_times=99), waits).investor_flow("005930")
+    assert waits == [2, 5, 10]
+
+
+def test_token_timeout_is_retried(tmp_path):
+    class SlowToken(FakeKis):
+        calls = 0
+
+        def post(self, url, json, timeout):
+            SlowToken.calls += 1
+            if SlowToken.calls == 1:
+                raise requests.exceptions.ConnectTimeout("connect timeout")
+            return super().post(url, json, timeout)
+    waits = []
+    assert slow_client(tmp_path, SlowToken([]), waits).token() == "T1" and waits == [2]
+
+
+def test_update_prices_skips_failed_stock_and_continues(tmp_path):
+    conn = db.connect(tmp_path / "m.sqlite")
+    days = bdays(date(2026, 9, 25), 5)
+
+    class OneBad(FakeKis):
+        def get(self, url, headers, params, timeout):
+            if params.get("FID_INPUT_ISCD") == "000660":
+                raise requests.exceptions.ReadTimeout("Read timed out.")
+            return super().get(url, headers, params, timeout)
+    kis = slow_client(tmp_path, OneBad(days), [])
+    r = market.update_prices(conn, kis, ["005930", "000660", "035420"], history_years=1)
+    assert r == {"ok": 2, "failed": ["000660"], "stopped": False}
+    assert sorted(c for (c,) in conn.execute("SELECT DISTINCT code FROM prices")) == ["005930", "035420"]
+
+
+def test_update_prices_stops_when_server_is_down(tmp_path, monkeypatch):
+    monkeypatch.setattr(market, "MAX_CONSECUTIVE_FAILS", 3)
+    conn = db.connect(tmp_path / "m.sqlite")
+    days = bdays(date(2026, 9, 25), 5)
+
+    class DownAfterFirst(FakeKis):
+        def get(self, url, headers, params, timeout):
+            if params.get("FID_INPUT_ISCD") != "A":
+                raise requests.exceptions.ReadTimeout("Read timed out.")
+            return super().get(url, headers, params, timeout)
+    fake = DownAfterFirst(days)
+    codes = ["A", "B", "C", "D", "E", "F"]
+    r = market.update_prices(conn, slow_client(tmp_path, fake, []), codes, history_years=1)
+    assert r["stopped"] and r["ok"] == 1 and r["failed"] == ["B", "C", "D", "E", "F"]
+    assert [c for (c,) in conn.execute("SELECT DISTINCT code FROM prices")] == ["A"]   # 받은 건 저장됨

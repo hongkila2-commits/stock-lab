@@ -31,6 +31,8 @@ MIN_INTERVAL = {"paper": 0.55, "real": 0.06}
 RATE_LIMIT_CODES = {"EGW00201"}              # 초당 거래건수 초과
 TOKEN_EXPIRED_CODES = {"EGW00123", "EGW00121"}  # 토큰 만료 / 유효하지 않은 토큰
 TOKEN_TOO_OFTEN = "EGW00133"                 # 토큰 발급 1분당 1회 제한
+TIMEOUT = (5, 30)               # (연결, 응답) 초 — 모의투자 서버는 응답이 10초 넘게 걸릴 때가 있다
+NETWORK_WAITS = (2, 5, 10)      # 시간 초과·연결 끊김 시 이만큼 쉬고 다시 (최대 3회)
 
 
 class KisError(RuntimeError):
@@ -56,6 +58,20 @@ class KisClient:
         self._last_call = 0.0
         self._token: str | None = None
 
+    # ── 네트워크 ───────────────────────────────────────────
+    def _request(self, method: str, url: str, **kw):
+        """시간 초과·연결 끊김은 잠시 쉬고 다시 시도. 끝내 안 되면 KisError("NETWORK")."""
+        for attempt in range(len(NETWORK_WAITS) + 1):
+            try:
+                return getattr(self.http, method)(url, timeout=TIMEOUT, **kw)
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt == len(NETWORK_WAITS):
+                    raise KisError("NETWORK", "한국투자증권 서버가 응답하지 않습니다 "
+                                              f"({type(e).__name__}). 잠시 후 다시 실행하세요.") from e
+                wait = NETWORK_WAITS[attempt]
+                log.warning("  서버 응답 지연 — %d초 후 다시 시도 (%d/%d)", wait, attempt + 1, len(NETWORK_WAITS))
+                self._sleep(wait)
+
     # ── 토큰 ───────────────────────────────────────────────
     def _key_id(self) -> str:
         return hashlib.sha256(self.app_key.encode()).hexdigest()[:12]
@@ -76,7 +92,7 @@ class KisClient:
         body = {"grant_type": "client_credentials",
                 "appkey": self.app_key, "appsecret": self.app_secret}
         for attempt in range(2):
-            r = self.http.post(f"{self.base}/oauth2/tokenP", json=body, timeout=10)
+            r = self._request("post", f"{self.base}/oauth2/tokenP", json=body)
             data = r.json()
             if "access_token" in data:
                 break
@@ -118,7 +134,7 @@ class KisClient:
                 "appkey": self.app_key, "appsecret": self.app_secret,
                 "tr_id": tr_id, "custtype": "P",
             }
-            r = self.http.get(f"{self.base}{path}", headers=headers, params=params, timeout=10)
+            r = self._request("get", f"{self.base}{path}", headers=headers, params=params)
             try:
                 data = r.json()
             except ValueError:
@@ -214,7 +230,7 @@ class KisClient:
 
     def approval_key(self) -> str:
         """실시간(WebSocket) 접속키. REST 토큰과 별개이며 appsecret 대신 'secretkey' 로 보낸다."""
-        r = self.http.post(f"{self.base}/oauth2/Approval", timeout=10, json={
+        r = self._request("post", f"{self.base}/oauth2/Approval", json={
             "grant_type": "client_credentials", "appkey": self.app_key, "secretkey": self.app_secret})
         data = r.json()
         if not data.get("approval_key"):
