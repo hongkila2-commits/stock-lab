@@ -178,6 +178,19 @@ def remove_stock(code: str) -> None:
 
 
 def cmd_update(args) -> int:
+    from . import runlock
+    try:
+        lock = runlock.acquire()
+    except runlock.AlreadyRunning as e:
+        log.error("%s 끝난 뒤에 다시 실행하세요.", e)
+        return 2
+    try:
+        return _update(args)
+    finally:
+        runlock.release(lock)
+
+
+def _update(args) -> int:
     from .collectors import dart, listing, macro, market, news
     s = load_settings()
     failed: list[str] = []

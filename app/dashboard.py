@@ -15,6 +15,7 @@ from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, my_watch
 from stocklab.config import db_path, horizon_label  # noqa: E402
 from views import detail, flows, macro, model, sectors, watch  # noqa: E402
 import mobile  # noqa: E402
+import updater  # noqa: E402
 from stocklab import netinfo  # noqa: E402
 
 # 휴대폰 등 다른 기기에서 접속하면 비밀번호 확인 (PC 자신은 통과)
@@ -196,10 +197,12 @@ with st.sidebar:
 
     c1, c2 = st.columns([1, 1])
     if c1.button("새로고침", width="stretch",
-                 help="저장된 값을 다시 읽습니다. 새 주가는 realtime.bat(장중 자동) 또는 💹 현재가 받기"):
+                 help="저장된 값을 다시 읽습니다. 새 데이터 받기는 아래 🔄 지금 업데이트, "
+                      "장중 현재가는 realtime.bat(자동) 또는 💹 현재가 받기"):
         refresh()
         st.rerun()
-    c2.caption(f"업데이트\n{META.get('last_update', '없음')}")
+    c2.caption(f"업데이트\n{META.get('last_update', '없음').replace('T', ' ')}")
+    updater.panel(DEMO)
     snapshot_button()
     st.caption(f"예측: {'·'.join(horizon_label(h) for h in S.horizons)} 뒤 {TARGET_LABEL} · "
                f"강세 ≥ {S.model['bullish']:.2f} · "
