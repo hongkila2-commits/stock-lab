@@ -51,6 +51,15 @@ def cmd_env_sync(args) -> int:
     return 0
 
 
+def cmd_stop_dashboard(args) -> int:
+    from .netinfo import stop_dashboard
+    pids = stop_dashboard(args.port)
+    if pids:
+        print(f"이미 실행 중이던 대시보드를 종료했습니다 (PID {', '.join(map(str, pids))}) — 새 코드로 다시 시작합니다.")
+        time.sleep(2)                                  # 포트가 풀릴 때까지
+    return 0
+
+
 def cmd_check(args) -> int:
     ok = True
     print(f"설정 파일: {ROOT / '.env'}")
@@ -418,5 +427,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("kakao-login").set_defaults(fn=cmd_kakao_login)
     sub.add_parser("kakao-test").set_defaults(fn=cmd_kakao_test)
     sub.add_parser("env-sync", help=".env 에 새 설정 항목 추가").set_defaults(fn=cmd_env_sync)
+    sd = sub.add_parser("stop-dashboard", help="이미 실행 중인 대시보드 종료 (dashboard.bat 이 사용)")
+    sd.add_argument("--port", type=int, default=8501)
+    sd.set_defaults(fn=cmd_stop_dashboard)
     args = p.parse_args(argv)
     return args.fn(args)

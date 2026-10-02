@@ -9,6 +9,8 @@ import hmac
 import ipaddress
 import re
 import socket
+import subprocess
+import sys
 
 from .config import env
 
@@ -80,3 +82,41 @@ def is_mobile(user_agent: str | None) -> bool:
 def password_ok(given: str) -> bool:
     want = env("DASHBOARD_PASSWORD")
     return bool(want) and hmac.compare_digest(given.encode("utf-8"), want.encode("utf-8"))
+
+
+# ── 이미 실행 중인 대시보드 정리 (dashboard.bat 을 다시 실행할 때) ─────────────
+def _run(cmd: list[str]) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def port_owner_pids(port: int, run=_run) -> list[int]:
+    """그 포트에서 접속을 기다리는 프로세스 (Windows). 다른 OS 는 빈 목록."""
+    if sys.platform != "win32" and run is _run:
+        return []
+    out = run(["powershell", "-NoProfile", "-Command",
+               f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue "
+               "| Select-Object -ExpandProperty OwningProcess -Unique"])
+    return sorted({int(x) for x in out.split() if x.isdigit() and int(x) > 0})
+
+
+def process_name(pid: int, run=_run) -> str:
+    out = run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"]).strip()
+    return out.split(",")[0].strip('"') if out.startswith('"') else ""
+
+
+def stop_dashboard(port: int = 8501, run=_run) -> list[int]:
+    """port 를 잡고 있는 예전 대시보드(python)를 끝낸다. 끝낸 PID 목록.
+
+    예전 대시보드가 켜져 있으면 새로 실행한 dashboard.bat 은 포트가 막혀 뜨지 못하고, 브라우저는 옛 코드가
+    돌고 있는 예전 대시보드로 열린다 (git pull 뒤 ImportError 의 원인). python 이 아닌 프로그램은 건드리지 않는다.
+    """
+    stopped = []
+    for pid in port_owner_pids(port, run):
+        if process_name(pid, run).lower().startswith("python"):
+            run(["taskkill", "/PID", str(pid), "/F"])
+            stopped.append(pid)
+    return stopped

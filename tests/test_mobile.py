@@ -50,3 +50,38 @@ def test_dashboard_url_prefers_setting_then_tailscale(monkeypatch):
 def test_local_ips_only_reachable_kinds():
     for ip in netinfo.local_ips():
         assert netinfo.classify(ip) in ("tailscale", "lan")
+
+
+# ── dashboard.bat 을 다시 실행할 때 예전 대시보드 정리 ─────────────────────────
+def fake_run(listeners, names):
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        if cmd[0] == "powershell":
+            return "\r\n".join(map(str, listeners)) + "\r\n"
+        if cmd[0] == "tasklist":
+            pid = int(cmd[2].split()[-1])
+            return f'"{names[pid]}","{pid}","Console","1","120,000 K"\r\n' if pid in names else "정보: 없음\r\n"
+        return ""
+    return run, calls
+
+
+def test_stop_dashboard_kills_only_python_listener():
+    run, calls = fake_run([4321, 999], {4321: "python.exe", 999: "nginx.exe"})
+    assert netinfo.stop_dashboard(8501, run) == [4321]
+    kills = [c for c in calls if c[0] == "taskkill"]
+    assert kills == [["taskkill", "/PID", "4321", "/F"]]          # 다른 프로그램은 건드리지 않음
+    assert "8501" in calls[0][-1]
+
+
+def test_stop_dashboard_nothing_running():
+    run, calls = fake_run([], {})
+    assert netinfo.stop_dashboard(8501, run) == []
+    assert not [c for c in calls if c[0] == "taskkill"]
+
+
+def test_port_owner_empty_off_windows():
+    import sys
+    if sys.platform != "win32":
+        assert netinfo.port_owner_pids(8501) == []

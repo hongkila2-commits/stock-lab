@@ -9,6 +9,51 @@ import streamlit as st
 
 st.set_page_config(page_title="StockLab", page_icon="📈", layout="wide")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+SCRIPT = Path(__file__).resolve()
+PROJECT = SCRIPT.parent.parent
+
+
+def _project_modules() -> dict[str, float]:
+    """메모리에 올라온 이 프로젝트의 모듈(stocklab·app) → 지금 파일 수정 시각."""
+    out = {}
+    for name, m in list(sys.modules.items()):
+        f = getattr(m, "__file__", None)
+        if not f:
+            continue
+        path = Path(f).resolve()
+        if name == "__main__" or path == SCRIPT:       # 이 화면 자체는 Streamlit 이 관리 (건드리면 멈춤)
+            continue
+        if PROJECT in path.parents and ".venv" not in path.parts:
+            try:
+                out[name] = path.stat().st_mtime
+            except OSError:
+                pass
+    return out
+
+
+def _drop_changed_code() -> None:
+    """git pull 로 코드가 바뀌었으면 메모리의 옛 모듈을 버린다 → 아래 import 가 새 파일을 읽는다.
+
+    Streamlit 은 이 화면(dashboard.py)만 매번 새로 읽고, stocklab/ 같은 다른 모듈은 처음 읽은 것을 계속 쓴다.
+    그래서 대시보드를 켠 채 git pull 하면 새 화면 코드가 옛 stocklab 을 불러 ImportError 가 났다.
+    하나라도 바뀌었으면 서로 맞물려 있으므로 프로젝트 모듈을 전부 버린다.
+    """
+    first = "_stocklab_mtimes" not in sys.__dict__     # 이 검사가 없던 예전 코드가 모듈을 읽어 둔 경우도 포함
+    seen = sys.__dict__.setdefault("_stocklab_mtimes", {})
+    now = _project_modules()
+    if (first and now) or any(name in seen and seen[name] != t for name, t in now.items()):
+        for name in now:
+            sys.modules.pop(name, None)
+        seen.clear()
+        st.cache_data.clear()
+
+
+def _remember_code() -> None:
+    seen = sys.__dict__.setdefault("_stocklab_mtimes", {})
+    seen.update({k: v for k, v in _project_modules().items() if k not in seen})
+
+
+_drop_changed_code()
 
 from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, my_watchlist, names,  # noqa: E402
                     now_kst, open_stock, prices, q, refresh, rt_alive, rt_status, stats)
@@ -17,6 +62,7 @@ from views import detail, flows, macro, model, sectors, watch  # noqa: E402
 import mobile  # noqa: E402
 import updater  # noqa: E402
 from stocklab import netinfo  # noqa: E402
+_remember_code()
 
 # .env 를 고쳤으면 대시보드를 다시 켜지 않아도 새 키를 쓴다
 reload_env()
