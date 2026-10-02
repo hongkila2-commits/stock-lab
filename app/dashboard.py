@@ -12,11 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (DOWN, H, PAGES, ROOT, S, TARGET_LABEL, UP, listing, my_watchlist, names,  # noqa: E402
                     now_kst, open_stock, prices, q, refresh, rt_alive, rt_status, stats)
-from stocklab.config import db_path, horizon_label  # noqa: E402
+from stocklab.config import db_path, horizon_label, reload_env  # noqa: E402
 from views import detail, flows, macro, model, sectors, watch  # noqa: E402
 import mobile  # noqa: E402
 import updater  # noqa: E402
 from stocklab import netinfo  # noqa: E402
+
+# .env 를 고쳤으면 대시보드를 다시 켜지 않아도 새 키를 쓴다
+reload_env()
 
 # 휴대폰 등 다른 기기에서 접속하면 비밀번호 확인 (PC 자신은 통과)
 mobile.gate()

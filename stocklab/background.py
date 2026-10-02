@@ -15,17 +15,18 @@ import sys
 from datetime import datetime
 
 from . import runlock
-from .config import LOG_DIR, ROOT
+from .config import ENV_FILE, LOG_DIR, ROOT, env_file_keys
 
 RUN_LOG = LOG_DIR / "update_run.log"
 RUN_INFO = LOG_DIR / "update_run.json"
 _procs: dict[int, subprocess.Popen] = {}      # 이 대시보드가 띄운 프로세스 (끝났는지·종료 코드 확인용)
 
 # (표시, 이름, 진행률 시작, 끝) — 주가·수급이 시간 대부분을 차지한다
-STEPS = [("⓪", "전체 종목 목록", 0.00, 0.04), ("①", "주가 수집", 0.04, 0.55),
-         ("②", "투자자 수급·업종", 0.55, 0.80), ("③", "거시지표", 0.80, 0.84),
-         ("④", "외국인 수급 스크리닝", 0.84, 0.87), ("⑤", "뉴스·공시", 0.87, 0.92),
+STEPS = [("⓪", "전체 종목 목록", 0.00, 0.03), ("①", "주가 수집", 0.03, 0.48),
+         ("②", "투자자 수급·업종", 0.48, 0.68), ("③", "거시지표", 0.68, 0.71),
+         ("④", "외국인 수급 스크리닝", 0.71, 0.73), ("⑤", "뉴스·공시", 0.73, 0.92),
          ("⑥", "예측", 0.92, 0.98), ("⑦", "저녁 요약 알림", 0.98, 0.99)]
+COUNTED = ("주가 수집", "투자자 수급·업종", "뉴스·공시")
 LINE = re.compile(r"^\d\d-\d\d \d\d:\d\d:\d\d (INFO|WARNING|ERROR) (.*)$")
 COUNT = re.compile(r"\[(\d+)/(\d+)\]|수급 (\d+)/(\d+) 종목")
 
@@ -37,7 +38,11 @@ def start(popen=subprocess.Popen) -> int:
         raise runlock.AlreadyRunning(info)
     cmd = [sys.executable, "-m", "stocklab", "update",
            *shlex.split(os.environ.get("STOCKLAB_UPDATE_ARGS", ""))]     # 시험용 인자 (예: --skip-market)
-    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
+    # .env 항목은 물려주지 않는다 → update 가 update.bat 처럼 .env 를 직접 읽는다.
+    # (대시보드를 켤 때 빈 값이던 키를 물려주면, .env 에 새로 넣은 키가 가려진다)
+    from_file = env_file_keys(ENV_FILE)
+    env = {k: v for k, v in os.environ.items() if k not in from_file}
+    env.update(PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     kw: dict = {}
     if sys.platform == "win32":
         # 창 없이 실행 · 대시보드 창의 Ctrl+C 가 전달되지 않게 별도 그룹
@@ -114,11 +119,14 @@ def progress(text: str) -> dict:
                 break
         else:
             c = COUNT.search(body)
-            if c and step in ("주가 수집", "투자자 수급·업종"):
+            if c and step in COUNTED:
                 n, total = (int(x) for x in (c.group(1) or c.group(3), c.group(2) or c.group(4)))
                 count = (n, total)
                 lo, hi = cur
-                frac = lo + (hi - lo) * min(n / max(total, 1), 1)
+                if step == "뉴스·공시":            # 뉴스 → 공시 두 바퀴: 구간의 앞 70% · 뒤 30%
+                    mid = lo + (hi - lo) * 0.7
+                    lo, hi = (lo, mid) if "뉴스" in body else (mid, hi)
+                frac = max(frac, lo + (hi - lo) * min(n / max(total, 1), 1))   # 뒤로 가지 않게
         if level == "ERROR":
             errors.append(body)
         elif level == "WARNING":

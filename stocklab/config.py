@@ -8,14 +8,39 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 MODEL_DIR = ROOT / "models"
 LOG_DIR = ROOT / "logs"
+ENV_FILE = ROOT / ".env"
 
-load_dotenv(ROOT / ".env")
+# utf-8-sig: 메모장이 파일 앞에 붙이는 BOM 이 첫 키 이름에 섞이지 않게
+load_dotenv(ENV_FILE, encoding="utf-8-sig")
+
+
+def env_file_keys(path: Path | None = None) -> dict[str, str]:
+    """.env 에 적힌 항목 (파일이 없으면 빈 dict)."""
+    path = path or ENV_FILE
+    if not path.exists():
+        return {}
+    return {k: v or "" for k, v in dotenv_values(path, encoding="utf-8-sig").items()}
+
+
+_from_file: set[str] = set()          # reload_env 가 .env 에서 넣은 변수
+
+
+def reload_env(path: Path | None = None) -> None:
+    """.env 를 다시 읽어 그 항목만 덮어쓴다. 대시보드는 계속 켜져 있으므로 .env 를 고치면
+    다시 시작하지 않아도 새 키를 쓰게 매 화면마다 호출한다. .env 에 없는 변수(STOCKLAB_DB 등)는 그대로,
+    .env 에서 지운 항목은 빈 값으로."""
+    now = env_file_keys(path)
+    for k in _from_file - now.keys():
+        os.environ[k] = ""
+    os.environ.update(now)
+    _from_file.clear()
+    _from_file.update(now)
 
 
 def _codes(d: dict | None) -> dict[str, str]:

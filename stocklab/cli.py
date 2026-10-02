@@ -85,10 +85,43 @@ def cmd_check(args) -> int:
         print(f"[실패] 전체 종목 목록 (선택 기능 — 없으면 settings.yaml 의 종목만 분석): {e}")
     from .kakao import Kakao
     print(f"[{'OK' if (ROOT / 'data' / 'kakao_token.json').exists() else '미설정'}] 카카오톡 알림 (선택): {Kakao().status()}")
-    for name, keys in {"공공데이터포털 시세": ["DATA_GO_KR_API_KEY"],"네이버 뉴스": ["NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"],
-                       "DART 공시": ["DART_API_KEY"], "한국은행 ECOS": ["ECOS_API_KEY"]}.items():
+    check_news()
+    check_dart()
+    for name, keys in {"공공데이터포털 시세": ["DATA_GO_KR_API_KEY"], "한국은행 ECOS": ["ECOS_API_KEY"]}.items():
         print(f"[{'OK' if all(env(k) for k in keys) else '미설정'}] {name} (선택)")
     return 0 if ok else 1
+
+
+def check_news() -> bool:
+    """네이버 뉴스 키를 실제 호출로 확인 (키가 '있는지'만 보면 틀린 키를 못 잡는다)."""
+    from .collectors import news
+    if not news.has_keys():
+        print("[미설정] 네이버 뉴스 (선택) — .env 에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET")
+        return False
+    try:
+        items = news.fetch_news('"삼성전자"', 1)
+    except Exception as e:
+        print(f"[실패] 네이버 뉴스: {e}")
+        return False
+    from .sentiment import clean
+    title = clean(items[0]["title"])[:40] if items else "(기사 없음)"
+    print(f"[OK] 네이버 뉴스: 삼성전자 최신 기사 '{title}'")
+    return True
+
+
+def check_dart() -> bool:
+    from .collectors import dart
+    key = env("DART_API_KEY")
+    if not key:
+        print("[미설정] DART 공시 (선택) — .env 에 DART_API_KEY")
+        return False
+    try:
+        rows = dart.fetch_list(key, "00126380", date.today() - timedelta(days=30))   # 삼성전자
+    except Exception as e:
+        print(f"[실패] DART 공시: {e}")
+        return False
+    print(f"[OK] DART 공시: 삼성전자 최근 30일 {len(rows)}건")
+    return True
 
 
 def _train_and_predict(conn, s, force_train: bool, allow_train: bool = True) -> None:
@@ -239,9 +272,12 @@ def _update(args) -> int:
         if top:
             log.info("  외국인 매수 강도 상위: %s", ", ".join(stocks[c] for c in top))
 
-        log.info("⑤ 뉴스·공시 수집 (%d종목)", len(targets))
-        news.update_news(conn, targets, int(s.collect["news_per_stock"]), s.sentiment["engine"])
-        dart.update_disclosures(conn, targets, int(s.collect["dart_lookback_days"]))
+        # 분석 대상 전체에서 모은다 (화면의 시총·AI 추천 종목도 뉴스가 보이게, 모델 특징값도 고르게).
+        # 관심종목·외국인 상위를 먼저 → 중간에 멈춰도 중요한 종목은 받아둔다.
+        news_targets = {**{c: stocks[c] for c in stocks if c in mine}, **targets, **stocks}
+        log.info("⑤ 뉴스·공시 수집 (%d종목)", len(news_targets))
+        news.update_news(conn, news_targets, int(s.collect["news_per_stock"]), s.sentiment["engine"])
+        dart.update_disclosures(conn, news_targets, int(s.collect["dart_lookback_days"]))
 
         log.info("⑥ 예측")
         _train_and_predict(conn, s, force_train=False)

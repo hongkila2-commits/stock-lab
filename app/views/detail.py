@@ -204,14 +204,62 @@ def chart(code: str) -> None:
     st.plotly_chart(fig, width="stretch")
 
 
-def news_and_disclosures(code: str) -> None:
+def _status(key: str) -> dict | None:
+    """update 가 남긴 마지막 수집 결과 (meta.news_status / dart_status): ok|시각|내용."""
+    m = q("SELECT value FROM meta WHERE key = ?", (key,))
+    if m.empty:
+        return None
+    kind, when, text = (m["value"].iloc[0].split("|", 2) + ["", ""])[:3]
+    return {"ok": kind == "ok", "when": when, "text": text}
+
+
+def _news_now(code: str) -> None:
+    """이 종목 뉴스를 지금 받기 — 키가 제대로 됐는지 바로 확인하는 용도도 겸한다."""
+    from stocklab import db
+    from stocklab.collectors.news import collect_one
+    from stocklab.sentiment import Scorer
+    name = names().get(code, code)
+    with st.spinner(f"{name} 뉴스 받는 중…"):
+        conn = db.connect()
+        try:
+            n = collect_one(conn, code, name, int(S.collect["news_per_stock"]), Scorer(S.sentiment["engine"]))
+            conn.commit()
+            st.session_state["news_msg"] = (code, True, f"{name} 뉴스 {n}건을 받았습니다.")
+        except Exception as e:
+            st.session_state["news_msg"] = (code, False, f"뉴스를 받지 못했습니다: {e}")
+        finally:
+            conn.close()
+    refresh()
+    st.rerun()
+
+
+def news_and_disclosures(code: str, demo: bool = False) -> None:
+    from stocklab.collectors.news import has_keys
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**최근 뉴스**")
+        msg = st.session_state.pop("news_msg", None)
+        fresh = bool(msg and msg[0] == code)          # 방금 '지금 뉴스 받기' 결과 → 예전 수집 결과보다 우선
+        if fresh:
+            (st.success if msg[1] else st.error)(msg[2])
         news = q("SELECT pub_ts, title, sentiment, link FROM news WHERE code = ? "
                  "ORDER BY pub_ts DESC LIMIT 30", (code,))
+        stat = _status("news_status")
         if news.empty:
-            st.caption("뉴스 없음 (네이버 API 키 필요 · 관심종목과 외국인 상위 종목만 수집)")
+            if demo:
+                st.caption("데모 데이터에는 이 종목 뉴스가 없습니다.")
+            elif not has_keys():
+                st.caption("네이버 API 키가 없습니다 — `.env` 에 NAVER_CLIENT_ID · NAVER_CLIENT_SECRET 을 넣고 "
+                           "저장하면 바로 반영됩니다 (대시보드를 다시 켤 필요 없음).")
+            elif fresh:
+                pass
+            elif stat and not stat["ok"]:
+                st.error(f"마지막 뉴스 수집 실패 ({stat['when']}): {stat['text']}")
+            elif stat:
+                st.caption(f"최근 기사가 없습니다 (마지막 수집 {stat['when']}).")
+            else:
+                st.caption("아직 뉴스를 수집하지 않았습니다 — 사이드바 🔄 지금 업데이트(또는 update.bat) 때 "
+                           "분석 대상 전 종목을 받습니다. 아래 버튼으로 이 종목만 바로 받을 수도 있습니다.")
         else:
             news["감성"] = news["sentiment"].map(
                 lambda s: "🔴 긍정" if s > 0.2 else "🔵 부정" if s < -0.2 else "⚪ 중립")
@@ -219,12 +267,28 @@ def news_and_disclosures(code: str) -> None:
                          height=380, column_config={
                              "link": st.column_config.LinkColumn("링크", display_text="열기"),
                              "pub_ts": "시각", "title": "제목"})
+            if stat:
+                st.caption(f"최근 30건 · 마지막 수집 {stat['when']}")
+        if not demo and not st.session_state.get("readonly") and has_keys():
+            if st.button("📰 지금 뉴스 받기", key="news_now",
+                         help="이 종목의 최신 뉴스를 네이버에서 바로 받습니다 (키 확인용으로도 쓸 수 있음)"):
+                _news_now(code)
     with c2:
         st.markdown("**최근 공시**")
         dis = q("SELECT date, kind, title, rcept_no FROM disclosures WHERE code = ? "
                 "ORDER BY date DESC LIMIT 30", (code,))
+        stat = _status("dart_status")
         if dis.empty:
-            st.caption("공시 없음 (DART 키 필요 · 관심종목과 외국인 상위 종목만 수집)")
+            if demo:
+                st.caption("데모 데이터에는 이 종목 공시가 없습니다.")
+            elif not env("DART_API_KEY"):
+                st.caption("DART 키가 없습니다 — `.env` 에 DART_API_KEY 를 넣으세요.")
+            elif stat and not stat["ok"]:
+                st.error(f"마지막 공시 수집 실패 ({stat['when']}): {stat['text']}")
+            elif stat:
+                st.caption(f"최근 1년 공시가 없습니다 (마지막 수집 {stat['when']}).")
+            else:
+                st.caption("아직 공시를 수집하지 않았습니다 — 사이드바 🔄 지금 업데이트(또는 update.bat) 때 받습니다.")
         else:
             dis["link"] = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=" + dis["rcept_no"]
             st.dataframe(dis[["date", "kind", "title", "link"]], hide_index=True, width="stretch",
@@ -255,4 +319,4 @@ def render(demo: bool) -> None:
         wide = ph.pivot(index="asof", columns="horizon", values="prob")
         wide.columns = [f"{horizon_label(h)}" for h in wide.columns]
         st.line_chart(wide, height=180)
-    news_and_disclosures(code)
+    news_and_disclosures(code, demo)

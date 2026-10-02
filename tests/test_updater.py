@@ -102,7 +102,7 @@ def test_progress_tracks_steps_and_counts():
 
     log += [L("INFO", "② 투자자 수급 수집"), L("INFO", "  수급 30/300 종목 완료")]
     p = bg.progress("\n".join(log))
-    assert p["step"] == "투자자 수급·업종" and p["count"] == (30, 300) and 0.55 < p["frac"] < 0.6
+    assert p["step"] == "투자자 수급·업종" and p["count"] == (30, 300) and 0.48 < p["frac"] < 0.52
 
     log += [L("INFO", "③ 거시지표 수집"), L("INFO", "⑥ 예측"), L("INFO", "── 1주(5거래일) 예측")]
     p = bg.progress("\n".join(log))
@@ -197,3 +197,33 @@ def test_status_after_dashboard_restart(runfiles):
     (runfiles / "update_run.json").write_text(json.dumps(
         {"pid": dead_pid(), "started": datetime.now().isoformat()}))
     assert not bg.status()["running"]
+
+
+# ── .env 를 고친 뒤 대시보드를 다시 켜지 않고 '지금 업데이트' 를 누른 경우 ─────────────
+def test_update_child_reads_fresh_env_file(runfiles, monkeypatch):
+    """대시보드가 켜질 때 빈 값으로 읽은 키를 update 프로세스가 물려받으면 안 된다.
+
+    python-dotenv 는 이미 있는 환경변수를 덮어쓰지 않으므로, 물려받은 빈 값이 .env 의 새 키를 가린다.
+    """
+    env_file = runfiles / ".env"
+    env_file.write_text("NAVER_CLIENT_ID=new-id\nNAVER_CLIENT_SECRET=new-secret\n", encoding="utf-8")
+    monkeypatch.setattr(bg, "ENV_FILE", env_file, raising=False)
+    monkeypatch.setenv("NAVER_CLIENT_ID", "")            # 대시보드 시작 시점의 빈 값
+    monkeypatch.setenv("NAVER_CLIENT_SECRET", "")
+    monkeypatch.setenv("STOCKLAB_KEEP_ME", "1")          # .env 에 없는 변수는 그대로 전달
+    bg.start(popen=FakePopen)
+    child_env = FakePopen.calls[0][1]["env"]
+    assert "NAVER_CLIENT_ID" not in child_env and "NAVER_CLIENT_SECRET" not in child_env
+    assert child_env["STOCKLAB_KEEP_ME"] == "1"
+
+
+def test_progress_counts_news_and_disclosures():
+    log = [L("INFO", "⑤ 뉴스·공시 수집 (300종목)"), L("INFO", "  [150/300] 삼성전자 뉴스 100건")]
+    p = bg.progress("\n".join(log))
+    assert p["step"] == "뉴스·공시" and p["count"] == (150, 300)
+    news_half = p["frac"]
+    log.append(L("INFO", "  [3/300] 삼성전자 공시 2건"))      # 공시 바퀴는 처음부터 다시 세지만
+    p = bg.progress("\n".join(log))
+    assert p["count"] == (3, 300) and p["frac"] >= news_half   # 진행률은 뒤로 가지 않는다
+    log.append(L("INFO", "  [300/300] 카카오 공시 1건"))
+    assert bg.progress("\n".join(log))["frac"] == 0.92
