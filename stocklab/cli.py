@@ -114,7 +114,7 @@ def check_news() -> bool:
         return False
     from .sentiment import clean
     title = clean(items[0]["title"])[:40] if items else "(기사 없음)"
-    print(f"[OK] 네이버 뉴스: 삼성전자 최신 기사 '{title}'")
+    print(f"[OK] 네이버 뉴스 ({news.platform_name()}): 삼성전자 최신 기사 '{title}'")
     return True
 
 

@@ -74,7 +74,8 @@ def test_news_saved_for_every_stock_with_progress(conn, caplog):
 def test_auth_error_stops_at_first_call_with_reason(conn, caplog, code, hint):
     fake = FakeNaver({n: code for n in STOCKS.values()})
     assert collect(conn, fake) == 0
-    assert len(fake.calls) == 1                         # 300종목에 같은 오류를 반복하지 않음
+    assert set(fake.calls) == {'"삼성전자"'}               # 첫 종목에서 멈춤 — 300종목에 같은 오류를 반복하지 않음
+    assert len(fake.calls) == (2 if code == 401 else 1)  # 401 은 다른 곳(API HUB↔개발자센터) 키인지 한 번 더 확인
     s = news.status(conn)
     assert not s["ok"] and hint in s["text"]
     assert hint in caplog.text
@@ -200,3 +201,62 @@ def test_network_errors_do_not_leak_dart_key(conn, no_corp_cache):
     assert "SECRETKEY123" not in str(e.value) and "연결하지 못했습니다" in str(e.value)
     assert run_dart(conn, Down()) == 0
     assert "k" * 40 not in db.get_meta(conn, "dart_status")
+
+
+# ── NAVER API HUB / 개발자센터 두 방식 ───────────────────────────────────────
+class TwoPlatforms:
+    """주소·헤더를 보고 응답하는 가짜 네이버. accepts = 키가 발급된 곳 ('hub' / 'developers' / None)."""
+    HEADER = {"hub": "X-NCP-APIGW-API-KEY-ID", "developers": "X-Naver-Client-Id"}
+
+    def __init__(self, accepts):
+        self.accepts, self.calls = accepts, []
+
+    def get(self, url, timeout, params, headers):
+        plat = "hub" if url == "https://naverapihub.apigw.ntruss.com/search/v1/news" else \
+            "developers" if url == "https://openapi.naver.com/v1/search/news.json" else "?"
+        self.calls.append(plat)
+        if plat == self.accepts and headers.get(self.HEADER[plat]) == "id":
+            return Resp(200, {"lastBuildDate": "x", "total": 2, "start": 1, "display": 2, "items": [ITEM]})
+        if plat == "hub":
+            return Resp(401, {"error": {"errorCode": "200", "message": "Authentication Failed",
+                                        "details": "Invalid authentication information."}})
+        return Resp(401, {"errorMessage": "NID AUTH Result Invalid (1000) : Authentication failed. (인증에 실패했습니다.)",
+                          "errorCode": "024"})
+
+
+@pytest.fixture(autouse=True)
+def fresh_platform(monkeypatch):
+    monkeypatch.setattr(news, "_platform", None, raising=False)
+
+
+def test_api_hub_key_works(conn):
+    """사용자 PC 에서 난 401 'NID AUTH Result Invalid': API HUB 키를 개발자센터 방식으로 보냈기 때문."""
+    fake = TwoPlatforms("hub")
+    assert collect(conn, fake) == 3
+    assert fake.calls == ["hub"] * 3
+    assert "API HUB" in news.status(conn)["text"]
+
+
+def test_old_developers_key_still_works_and_is_remembered(conn):
+    fake = TwoPlatforms("developers")
+    assert collect(conn, fake) == 3
+    assert fake.calls == ["hub", "developers", "developers", "developers"]   # 한 번 확인 뒤엔 되는 쪽만
+    assert "개발자센터" in news.status(conn)["text"]
+
+
+def test_wrong_key_on_both_stops_with_reason(conn):
+    fake = TwoPlatforms(None)
+    assert collect(conn, fake) == 0
+    assert fake.calls == ["hub", "developers"]
+    s = news.status(conn)
+    assert not s["ok"] and "API HUB" in s["text"] and "Client ID" in s["text"]
+
+
+def test_bad_item_is_skipped(conn):
+    class Odd(TwoPlatforms):
+        def get(self, *a, **k):
+            r = super().get(*a, **k)
+            if r.status_code == 200:
+                r._d["items"] = [ITEM, {"title": "날짜 없는 기사", "link": "x"}, {**ITEM, "pubDate": "어제"}]
+            return r
+    assert collect(conn, Odd("hub"), {"005930": "삼성전자"}) == 1
